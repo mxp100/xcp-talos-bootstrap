@@ -243,7 +243,6 @@ attach_second_iso() {
       echo "ISO SR not found. Check ISO_SR_NAME='${ISO_SR_NAME}'"
       exit 1
     fi
-    cp -f "$iso_path" "${ISO_DIR}/$iso_name"
     xe_must sr-scan uuid="$iso_sr_uuid"
     iso_vdi=$(lookup_iso_vdi_by_name "$iso_name")
     if [[ -z "$iso_vdi" ]]; then
