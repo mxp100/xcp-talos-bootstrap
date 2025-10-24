@@ -344,6 +344,7 @@ reconcile_group() {
 
     local vm_uuid
     vm_uuid=$(create_vm "$name" "$vcpu" "$ram" "$disk" "$net_uuid" "$sr_uuid" "$kargs")
+    echo "VM UUID: $vm_uuid"
     attach_iso "$vm_uuid" "$ISO_LOCAL_PATH"
     local seed_iso
     seed_iso=$(create_seed_iso_from_mc "$name" "$ip" "$role")
@@ -418,12 +419,10 @@ create_vm() {
   xe_must vm-param-set uuid="$vm_uuid" platform:videoram="8"
 
   # vNIC
-  echo "Create vNIC"
   vif_uuid=$(xe vif-create vm-uuid="$vm_uuid" network-uuid="$net_uuid" device=0)
   xe_must vif-param-set uuid="$vif_uuid" other-config:ethtool-gso="off"
 
   # Disk
-  echo "Create VDI"
   vdi_uuid=$(xe vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=user virtual-size=$((disk_gib*1024*1024*1024)))
   vbduuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW)
   xe_must vbd-param-set uuid="$vbduuid" userdevice=0
