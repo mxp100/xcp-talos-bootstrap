@@ -23,9 +23,6 @@ DNS_SERVER="1.1.1.1"
 CP_IPS=("192.168.10.2" "192.168.10.3" "192.168.10.4")
 WK_IPS=("192.168.10.10" "192.168.10.11" "192.168.10.12")
 
-# Talos endpoint (можно указать VIP/адрес первого CP)
-TALOS_ENDPOINT="https://192.168.10.2:6443"
-
 # Пути к machineconfig-шаблонам (должны существовать до запуска)
 # Содержимое — стандартные talos machineconfig для controlplane/worker, без секции network (ниже вставим сеть).
 TEMPLATE_DIR="$(pwd)/seeds/templates"
