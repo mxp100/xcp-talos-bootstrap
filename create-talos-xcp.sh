@@ -337,6 +337,18 @@ create_vm() {
   local template_uuid vm_uuid vdi_uuid vbduuid vif_uuid
 
   template_uuid=$(xe template-list name-label="Other install media" --minimal)
+  if [[ -z "$template_uuid" ]]; then
+    echo "Template 'Other install media' not found. Run 'xe template-list' and adjust the name."
+    exit 1
+  fi
+  if [[ -z "$net_uuid" ]]; then
+    echo "Network UUID is empty. Check NETWORK_NAME."
+    exit 1
+  fi
+  if [[ -z "$sr_uuid" ]]; then
+    echo "SR UUID is empty. Check SR_NAME or default SR."
+    exit 1
+  fi
   vm_uuid=$(xe vm-clone new-name-label="$name" uuid="$template_uuid")
   xe_must vm-param-set uuid="$vm_uuid" is-a-template=false
   xe_must vm-param-set uuid="$vm_uuid" name-description="Talos Linux node"
