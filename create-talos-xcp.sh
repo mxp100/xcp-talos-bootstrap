@@ -217,7 +217,7 @@ attach_iso() {
     exit 1
   fi
   xe_must vbd-param-set uuid="$cd_vbd" userdevice=3
-  xe_must vbd-param-set uuid="$cd_vbd" vdi-uuid="$iso_vdi"
+  xe_must vbd-insert uuid="$cd_vbd" vdi-uuid="$iso_vdi"
 }
 
 attach_second_iso() {
