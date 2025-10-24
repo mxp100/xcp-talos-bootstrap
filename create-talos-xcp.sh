@@ -178,7 +178,7 @@ EOF
 
   # Check and install genisoimage if needed
   if ! command -v genisoimage >/dev/null 2>&1; then
-    yum install -y genisoimage
+    yum install -y genisoimage >/dev/null
   fi
 
   # Сборка ISO
@@ -351,6 +351,7 @@ reconcile_group() {
     echo "Disk source attached"
     local seed_iso
     seed_iso=$(create_seed_iso_from_mc "$name" "$ip" "$role")
+    echo "Seed ISO: $seed_iso"
     attach_second_iso "$vm_uuid" "$seed_iso"
     echo "Created VM: $name ($ip) uuid=$vm_uuid"
   done
