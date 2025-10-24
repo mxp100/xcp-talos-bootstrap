@@ -5,8 +5,8 @@ xe_try() { xe "$@" 2>&1; }
 
 # ========= CONFIG =========
 CLUSTER_NAME="talos-xcp"
-NETWORK_NAME="vnic"                         # name-label сети в XCP-ng (меняйте при необходимости)
-SR_NAME=""                                  # оставить пустым чтобы выбрать default SR
+NETWORK_NAME="vnic"
+SR_NAME=""
 ISO_URL="https://github.com/siderolabs/talos/releases/download/v1.11.3/metal-amd64.iso"
 ISO_LOCAL_PATH="/opt/iso/talos-amd64.iso"
 ISO_SR_NAME="ISO SR"
@@ -14,32 +14,26 @@ VM_BASE_NAME_CP="${CLUSTER_NAME}-cp"
 VM_BASE_NAME_WK="${CLUSTER_NAME}-wk"
 CP_COUNT=3
 WK_COUNT=3
-RECONCILE=true   # если true — добавляем недостающие и удаляем лишние ВМ для соответствия CP_COUNT/WK_COUNT
+RECONCILE=true
 
-# IP-параметры
+# IP
 GATEWAY="192.168.10.1"
 CIDR_PREFIX="24"
 DNS_SERVER="1.1.1.1"
 
-# Диапазоны IP
 CP_IPS=("192.168.10.2" "192.168.10.3" "192.168.10.4")
 WK_IPS=("192.168.10.10" "192.168.10.11" "192.168.10.12")
 
-# Talos endpoint (можно указать VIP/адрес первого CP)
 TALOS_ENDPOINT="https://192.168.10.2:6443"
 
-# Пути к machineconfig-шаблонам (должны существовать до запуска)
-# Содержимое — стандартные talos machineconfig для controlplane/worker, без секции network (ниже вставим сеть).
 TEMPLATE_DIR="$(pwd)/seeds/templates"
 CP_TEMPLATE="${TEMPLATE_DIR}/controlplane.yaml"
 WK_TEMPLATE="${TEMPLATE_DIR}/worker.yaml"
 
-# Папка для генерации индивидуальных сидов
 SEEDS_DIR="$(pwd)/seeds"
 ISO_DIR="/var/iso"
 
-# Если используете talos.config.url вместо сидов, можно указать тут:
-KERNEL_ARGS=""  # пример: "talos.platform=metal talos.config.url=http://your/http/<name>.yaml"
+KERNEL_ARGS=""
 
 # ========= Helpers =========
 xe_must() { xe "$@" >/dev/null; }
@@ -164,16 +158,9 @@ destroy_vm_by_uuid() {
     done
   fi
 
-  # Сохраним список VDI до уничтожения ВМ, чтобы убрать и диски
-  local vdis
-  vdis=$(xe vdi-list name-label | grep "$uuid-does-not-match" >/dev/null 2>&1 || true) # placeholder to keep shell safe
-
-  # Получим VDI связанные с ВМ через VBD до удаления (еще раз)
   local vdi_list
   vdi_list=$(xe vbd-list vm-uuid="$uuid" params=vdi-uuid --minimal 2>/dev/null || true)
-
   xe_must vm-uninstall uuid="$uuid" force=true
-
   if [[ -n "$vdi_list" ]]; then
     IFS=, read -r -a vdi_arr <<< "$vdi_list"
     for vdi in "${vdi_arr[@]}"; do
@@ -233,7 +220,7 @@ reconcile_group() {
     local vm_uuid
     vm_uuid=$(create_vm "$name" "$vcpu" "$ram" "$disk" "$net_uuid" "$sr_uuid" "$kargs")
     if [[ -z "$vm_uuid" ]]; then
-      echo "create_vm returned empty UUID for $name"
+      echo "Failed to create VM $name"
       exit 1
     fi
 
@@ -272,15 +259,8 @@ reconcile_group() {
 }
 
 create_vm() {
-  local name="$1"
-  local vcpu="${2:-}"
-  local ram_gib="${3:-}"
-  local disk_gib="${4:-}"
-  local net_uuid="${5:-}"
-  local sr_uuid="${6:-}"
-  local kernel_args="${7:-}"
+  local name="$1" vcpu="${2:-}" ram_gib="${3:-}" disk_gib="${4:-}" net_uuid="${5:-}" sr_uuid="${6:-}" kernel_args="${7:-}"
 
-  # Validate inputs to avoid shifted/empty args causing xe errors
   if [[ -z "$name" || -z "$vcpu" || -z "$ram_gib" || -z "$disk_gib" || -z "$net_uuid" || -z "$sr_uuid" ]]; then
     echo "create_vm: missing parameters (name=$name vcpu=$vcpu ram_gib=$ram_gib disk_gib=$disk_gib net=$net_uuid sr=$sr_uuid)"
     exit 1
@@ -291,9 +271,8 @@ create_vm() {
   fi
 
   echo "Creating VM $name"
-  local template_uuid vm_uuid vdi_uuid vbduuid vif_uuid
+  local template_uuid vm_uuid
 
-  # Try both common template names
   template_uuid=$(xe template-list name-label="Other install media (64-bit)" --minimal)
   if [[ -z "$template_uuid" ]]; then
     template_uuid=$(xe template-list name-label="Other install media" --minimal)
@@ -303,7 +282,6 @@ create_vm() {
     exit 1
   fi
 
-  # Clone with retry
   local out
   for _ in 1 2 3; do
     out=$(xe_try vm-clone new-name-label="$name" uuid="$template_uuid" || true)
@@ -320,7 +298,6 @@ create_vm() {
   xe_must vm-param-set uuid="$vm_uuid" name-description="Talos Linux node"
   xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
 
-  # Memory: set in safe order
   local bytes
   bytes=$(printf '%d' $((ram_gib * 1024 * 1024 * 1024)))
   xe_must vm-param-set uuid="$vm_uuid" memory-static-max="$bytes"
@@ -328,33 +305,30 @@ create_vm() {
   xe_must vm-param-set uuid="$vm_uuid" memory-dynamic-min="$bytes"
   xe_must vm-param-set uuid="$vm_uuid" memory-static-min="$bytes"
 
-  # vNIC
-  local vif_uuid
-  out=$(xe_try vif-create vm-uuid="$vm_uuid" network-uuid="$net_uuid" device=0 || true)
-  vif_uuid=$(echo "$out" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
+  local out_vif vif_uuid
+  out_vif=$(xe_try vif-create vm-uuid="$vm_uuid" network-uuid="$net_uuid" device=0 || true)
+  vif_uuid=$(echo "$out_vif" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
   if [[ -z "$vif_uuid" ]]; then
-    echo "vif-create failed for $name: $out"
+    echo "vif-create failed for $name: $out_vif"
     exit 1
   fi
   xe_must vif-param-set uuid="$vif_uuid" other-config:ethtool-gso="off"
 
-  # Disk
-  local vdi_uuid vbduuid
-  out=$(xe_try vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=user virtual-size="$(printf '%d' $((disk_gib * 1024 * 1024 * 1024)))" || true)
-  vdi_uuid=$(echo "$out" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
+  local out_vdi vdi_uuid out_vbd vbduuid
+  out_vdi=$(xe_try vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=user virtual-size="$(printf '%d' $((disk_gib * 1024 * 1024 * 1024)))" || true)
+  vdi_uuid=$(echo "$out_vdi" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
   if [[ -z "$vdi_uuid" ]]; then
-    echo "vdi-create failed for $name: $out"
+    echo "vdi-create failed for $name: $out_vdi"
     exit 1
   fi
-  out=$(xe_try vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW || true)
-  vbduuid=$(echo "$out" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
+  out_vbd=$(xe_try vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW || true)
+  vbduuid=$(echo "$out_vbd" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
   if [[ -z "$vbduuid" ]]; then
-    echo "vbd-create failed for $name: $out"
+    echo "vbd-create failed for $name: $out_vbd"
     exit 1
   fi
   xe_must vbd-param-set uuid="$vbduuid" userdevice=0
 
-  # PV boot
   xe_must vm-param-set uuid="$vm_uuid" HVM-boot-policy=""
   xe_must vm-param-set uuid="$vm_uuid" PV-bootloader="pygrub"
   if [[ -n "$kernel_args" ]]; then
