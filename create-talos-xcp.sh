@@ -410,6 +410,8 @@ create_vm() {
   if [[ -n "$kernel_args" ]]; then
     xe_must vm-param-set uuid="$vm_uuid" PV-args="$kernel_args"
   fi
+  
+  xe_must vm-param-set uuid="$vm_uuid" HVM-shadow-multiplier=2.0
 
   # Platform flags - minimal for PV mode
   xe_must vm-param-set uuid="$vm_uuid" platform:device-model=""
