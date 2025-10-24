@@ -34,10 +34,10 @@ WK_TEMPLATE="${TEMPLATE_DIR}/worker.yaml"
 
 # Папка для генерации индивидуальных сидов
 SEEDS_DIR="$(pwd)/seeds"
-ISO_DIR="/var/iso"
+ISO_DIR="/opt/iso"
 
-# Если используете talos.config.url вместо сидов, можно указать тут:
-KERNEL_ARGS=""  # пример: "talos.platform=metal talos.config.url=http://your/http/<name>.yaml"
+# Optional kernel args
+KERNEL_ARGS=""
 
 # ========= Helpers =========
 xe_must() { xe "$@" >/dev/null; }
@@ -95,12 +95,9 @@ lookup_iso_vdi_by_name() {
 }
 
 create_seed_iso_from_mc() {
-  # Генерирует seed ISO (cidata) для Talos c network статикой и machineconfig
-  # user-data: talos machineconfig с вшитой сетью
-  # meta-data: уникальные hostname/instance-id
   local vmname="$1"
   local ip="$2"
-  local role="$3"          # cp | wk
+  local role="$3"
   local out_iso="${ISO_DIR}/${vmname}-seed.iso"
 
   local src_dir="${SEEDS_DIR}/${vmname}"
@@ -350,23 +347,30 @@ create_vm() {
   xe_must vm-param-set uuid="$vm_uuid" platform:videoram="8"
 
   xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
+  # Ensure memory is set BEFORE any other operations that could query it
   local bytes=$((ram_gib*1024*1024*1024))
   xe_must vm-memory-set uuid="$vm_uuid" static-min=$bytes dynamic-min=$bytes dynamic-max=$bytes static-max=$bytes
+
+  # vCPU
+  xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
+
+  # Make sure we are in PV mode with pygrub and sane platform flags for XCP-ng 8.3
+  xe_must vm-param-set uuid="$vm_uuid" HVM-boot-policy=""
+  xe_must vm-param-set uuid="$vm_uuid" PV-bootloader="pygrub"
+  if [[ -n "$kernel_args" ]]; then
+    xe_must vm-param-set uuid="$vm_uuid" PV-args="$kernel_args"
+  fi
+  xe_must vm-param-set uuid="$vm_uuid" platform:device-model="qemu-upstream-compat"
+  xe_must vm-param-set uuid="$vm_uuid" platform:videoram="8"
 
   # vNIC
   vif_uuid=$(xe vif-create vm-uuid="$vm_uuid" network-uuid="$net_uuid" device=0)
   xe_must vif-param-set uuid="$vif_uuid" other-config:ethtool-gso="off"
 
-  # Диск
-  vdi_uuid=$(xe vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=User virtual-size=$((disk_gib*1024*1024*1024)))
+  # Disk (VDI type must be 'user' in lowercase on XCP-ng 8.3)
+  vdi_uuid=$(xe vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=user virtual-size=$((disk_gib*1024*1024*1024)))
   vbduuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW)
   xe_must vbd-param-set uuid="$vbduuid" userdevice=0
-
-  # PV boot with pygrub (Talos metal ISO boots as PV kernel/initrd via pygrub)
-  xe_must vm-param-set uuid="$vm_uuid" PV-bootloader="pygrub"
-  if [[ -n "$kernel_args" ]]; then
-    xe_must vm-param-set uuid="$vm_uuid" PV-args="$kernel_args"
-  fi
 
   echo "$vm_uuid"
 }
