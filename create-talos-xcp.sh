@@ -57,17 +57,40 @@ ensure_iso_sr() {
     echo "Creating ISO SR..."
     local host_uuid sr_uuid pbd_uuid
     host_uuid=$(get_pool_master)
+    if [[ -z "$host_uuid" ]]; then
+      echo "Pool master UUID is empty. Check your pool configuration."
+      exit 1
+    fi
     mkdir -p "$ISO_DIR"
     sr_uuid=$(xe sr-create name-label="${ISO_SR_NAME}" type=iso device-config:location="$ISO_DIR" device-config:legacy_mode=true content-type=iso)
+    if [[ -z "$sr_uuid" ]]; then
+      echo "Failed to create ISO SR at ${ISO_DIR}"
+      exit 1
+    fi
     pbd_uuid=$(xe pbd-list sr-uuid="$sr_uuid" host-uuid="$host_uuid" --minimal)
     if [[ -z "$pbd_uuid" ]]; then
       pbd_uuid=$(xe pbd-create sr-uuid="$sr_uuid" host-uuid="$host_uuid" device-config:location="$ISO_DIR" device-config:legacy_mode=true)
+    fi
+    if [[ -z "$pbd_uuid" ]]; then
+      echo "Failed to create/locate PBD for ISO SR"
+      exit 1
     fi
     xe_must pbd-plug uuid="$pbd_uuid"
     xe_must sr-scan uuid="$sr_uuid"
   else
     xe_must sr-scan uuid="$iso_sr"
   fi
+}
+
+lookup_iso_vdi_by_name() {
+  local iso_name="$1"
+  local iso_sr_uuid
+  iso_sr_uuid=$(xe sr-list name-label="${ISO_SR_NAME}" type=iso --minimal)
+  if [[ -z "$iso_sr_uuid" ]]; then
+    echo ""
+    return 0
+  fi
+  xe vdi-list sr-uuid="$iso_sr_uuid" name-label="$iso_name" --minimal
 }
 
 import_iso_if_needed() {
@@ -82,16 +105,16 @@ import_iso_if_needed() {
 
 find_network_uuid() {
   local name="$1"
-  xe network-list name-label="$name" --minimal
-}
-
-lookup_iso_vdi_by_name() {
-  # Finds VDI uuid (ISO) by file basename inside ISO SR
-  local iso_name="$1"
-  local iso_sr_uuid
-  iso_sr_uuid=$(xe sr-list name-label="${ISO_SR_NAME}" type=iso --minimal)
-  [[ -z "$iso_sr_uuid" ]] && echo "" && return 0
-  xe vdi-list sr-uuid="$iso_sr_uuid" name-label="$iso_name" --minimal
+  local res
+  res=$(xe network-list name-label="$name" --minimal)
+  # Disallow multiple or empty
+  if [[ -z "$res" ]]; then
+    echo ""
+  elif [[ "$res" == *,* ]]; then
+    echo ""
+  else
+    echo "$res"
+  fi
 }
 
 create_seed_iso_from_mc() {
@@ -163,22 +186,33 @@ EOF
 attach_iso() {
   local vm_uuid="$1"
   local iso_path="$2"
-  local iso_name
+  if [[ -z "$vm_uuid" ]]; then
+    echo "attach_iso: VM uuid is empty"
+    exit 1
+  fi
+  if [[ ! -f "$iso_path" ]]; then
+    echo "attach_iso: ISO not found at $iso_path"
+    exit 1
+  fi
+  local iso_name iso_vdi cd_vbd
   iso_name=$(basename "$iso_path")
-  local iso_vdi cd_vbd
   iso_vdi=$(lookup_iso_vdi_by_name "$iso_name")
   if [[ -z "$iso_vdi" ]]; then
     echo "ISO '$iso_name' not found in ISO SR index. Running SR scan..."
     ensure_iso_sr
     iso_vdi=$(lookup_iso_vdi_by_name "$iso_name")
     if [[ -z "$iso_vdi" ]]; then
-      echo "Failed to locate ISO '$iso_name' in ISO SR"
+      echo "Failed to locate ISO '$iso_name' in ISO SR at ${ISO_DIR}. Ensure the ISO SR location matches ISO_DIR."
       exit 1
     fi
   fi
   cd_vbd=$(xe vbd-list vm-uuid="$vm_uuid" type=CD --minimal)
   if [[ -z "$cd_vbd" ]]; then
     cd_vbd=$(xe vbd-create vm-uuid="$vm_uuid" type=CD device=3 bootable=true mode=RO empty=true)
+  fi
+  if [[ -z "$cd_vbd" ]]; then
+    echo "attach_iso: failed to create/list CD VBD"
+    exit 1
   fi
   xe_must vbd-param-set uuid="$cd_vbd" userdevice=3
   xe_must vbd-param-set uuid="$cd_vbd" vdi-uuid="$iso_vdi"
@@ -187,25 +221,36 @@ attach_iso() {
 attach_second_iso() {
   local vm_uuid="$1"
   local iso_path="$2"
-  local iso_name
+  if [[ -z "$vm_uuid" ]]; then
+    echo "attach_second_iso: VM uuid is empty"
+    exit 1
+  fi
+  if [[ ! -f "$iso_path" ]]; then
+    echo "attach_second_iso: seed ISO not found at $iso_path"
+    exit 1
+  fi
+  local iso_name iso_vdi cd_vbd2 iso_sr_uuid
   iso_name=$(basename "$iso_path")
-  local iso_vdi cd_vbd2
   iso_vdi=$(lookup_iso_vdi_by_name "$iso_name")
   if [[ -z "$iso_vdi" ]]; then
-    # Import seed ISO into ISO SR (required for vm-cd-add; easier to use VDI attach)
-    local iso_sr_uuid
     iso_sr_uuid=$(xe sr-list name-label="${ISO_SR_NAME}" type=iso --minimal)
-    [[ -z "$iso_sr_uuid" ]] && { echo "ISO SR not found"; exit 1; }
-    # Place file and rescan SR so it appears as VDI
+    if [[ -z "$iso_sr_uuid" ]]; then
+      echo "ISO SR not found. Check ISO_SR_NAME='${ISO_SR_NAME}'"
+      exit 1
+    fi
     cp -f "$iso_path" "${ISO_DIR}/$iso_name"
     xe_must sr-scan uuid="$iso_sr_uuid"
     iso_vdi=$(lookup_iso_vdi_by_name "$iso_name")
     if [[ -z "$iso_vdi" ]]; then
-      echo "Failed to import seed ISO '$iso_name' to ISO SR"
+      echo "Failed to import seed ISO '$iso_name' to ISO SR at ${ISO_DIR}"
       exit 1
     fi
   fi
   cd_vbd2=$(xe vbd-create vm-uuid="$vm_uuid" type=CD device=4 bootable=false mode=RO empty=true)
+  if [[ -z "$cd_vbd2" ]]; then
+    echo "attach_second_iso: failed to create CD VBD2"
+    exit 1
+  fi
   xe_must vbd-param-set uuid="$cd_vbd2" userdevice=4
   xe_must vbd-param-set uuid="$cd_vbd2" vdi-uuid="$iso_vdi"
 }
@@ -392,7 +437,7 @@ main() {
   local net_uuid sr_uuid default_sr
   net_uuid=$(find_network_uuid "$NETWORK_NAME")
   if [[ -z "$net_uuid" ]]; then
-    echo "Network '$NETWORK_NAME' not found."
+    echo "Network '$NETWORK_NAME' not found or ambiguous. Use a unique name-label."
     exit 1
   fi
 
@@ -405,8 +450,8 @@ main() {
     sr_uuid="$default_sr"
   else
     sr_uuid=$(xe sr-list name-label="$SR_NAME" --minimal)
-    if [[ -z "$sr_uuid" ]]; then
-      echo "SR '$SR_NAME' not found."
+    if [[ -z "$sr_uuid" || "$sr_uuid" == *,* ]]; then
+      echo "SR '$SR_NAME' not found or ambiguous."
       exit 1
     fi
   fi
