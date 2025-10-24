@@ -383,10 +383,10 @@ create_vm() {
   local disk_gib="$4"
   local net_uuid="$5"
   local sr_uuid="$6"
-  local kernel_args="$7"
 
-  local template_uuid vm_uuid vdi_uuid vbduuid vif_uuid
+  local template_uuid vm_uuid vdi_uuid vbd_uuid vif_uuid
 
+  # Use HVM template instead
   template_uuid=$(xe template-list name-label="Other install media" --minimal)
   if [[ -z "$template_uuid" ]]; then
     echo "Template 'Other install media' not found. Run 'xe template-list' and adjust the name."
@@ -404,22 +404,28 @@ create_vm() {
   xe_must vm-param-set uuid="$vm_uuid" is-a-template=false
   xe_must vm-param-set uuid="$vm_uuid" name-description="Talos Linux node"
 
-  # Set PV mode FIRST before memory operations
-  xe_must vm-param-set uuid="$vm_uuid" HVM-boot-policy=""
-  xe_must vm-param-set uuid="$vm_uuid" PV-bootloader="pygrub"
-  if [[ -n "$kernel_args" ]]; then
-    xe_must vm-param-set uuid="$vm_uuid" PV-args="$kernel_args"
-  fi
+  # Set HVM mode
+  xe_must vm-param-set uuid="$vm_uuid" HVM-boot-policy="BIOS order"
+  xe_must vm-param-set uuid="$vm_uuid" HVM-boot-params:order="dc"
   
-  xe_must vm-param-set uuid="$vm_uuid" HVM-shadow-multiplier=2.0
+  # Remove PV bootloader settings
+  xe_must vm-param-remove uuid="$vm_uuid" param-name=PV-bootloader 2>/dev/null || true
+  xe_must vm-param-remove uuid="$vm_uuid" param-name=PV-args 2>/dev/null || true
 
-  # Platform flags - minimal for PV mode
-  xe_must vm-param-set uuid="$vm_uuid" platform:device-model=""
-  xe_must vm-param-remove uuid="$vm_uuid" param-name=platform param-key=videoram 2>/dev/null || true
+  # Platform flags for HVM mode
+  xe_must vm-param-set uuid="$vm_uuid" platform:acpi=1
+  xe_must vm-param-set uuid="$vm_uuid" platform:apic=true
+  xe_must vm-param-set uuid="$vm_uuid" platform:pae=true
+  xe_must vm-param-set uuid="$vm_uuid" platform:viridian=true
+  xe_must vm-param-set uuid="$vm_uuid" platform:nx=true
+  xe_must vm-param-set uuid="$vm_uuid" platform:device-model=qemu-upstream-compat
 
   # Set memory with proper static and dynamic values
   local bytes=$((ram_gib*1024*1024*1024))
   xe_must vm-memory-set uuid="$vm_uuid" memory="$bytes"
+
+  # Set shadow multiplier for HVM domain
+  xe_must vm-param-set uuid="$vm_uuid" HVM-shadow-multiplier=1.0
 
   # vCPU
   xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
@@ -430,8 +436,8 @@ create_vm() {
 
   # Disk
   vdi_uuid=$(xe vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=user virtual-size=$((disk_gib*1024*1024*1024)))
-  vbduuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW)
-  xe_must vbd-param-set uuid="$vbduuid" userdevice=0
+  vbd_uuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW)
+  xe_must vbd-param-set uuid="$vbd_uuid" userdevice=0
 
   echo "$vm_uuid"
 }
