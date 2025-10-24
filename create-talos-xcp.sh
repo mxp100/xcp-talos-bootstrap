@@ -7,6 +7,7 @@ NETWORK_NAME="vnic"                         # name-label сети в XCP-ng (м�
 SR_NAME=""                                  # оставить пустым чтобы выбрать default SR
 ISO_URL="https://github.com/siderolabs/talos/releases/download/v1.7.6/talos-amd64.iso"
 ISO_LOCAL_PATH="/var/iso/talos-amd64.iso"
+ISO_SR_NAME="ISO SR"
 VM_BASE_NAME_CP="${CLUSTER_NAME}-cp"
 VM_BASE_NAME_WK="${CLUSTER_NAME}-wk"
 CP_COUNT=3
@@ -50,13 +51,13 @@ get_pool_master() {
 
 ensure_iso_sr() {
   local iso_sr
-  iso_sr=$(xe sr-list name-label="ISO SR" type=iso --minimal || true)
+  iso_sr=$(xe sr-list name-label="${ISO_SR_NAME}" type=iso --minimal || true)
   if [[ -z "$iso_sr" ]]; then
     echo "Creating ISO SR..."
     local host_uuid sr_uuid pbd_uuid
     host_uuid=$(get_pool_master)
     mkdir -p "$ISO_DIR"
-    sr_uuid=$(xe sr-create name-label="ISO SR" type=iso device-config:location="$ISO_DIR" device-config:legacy_mode=true content-type=iso)
+    sr_uuid=$(xe sr-create name-label="${ISO_SR_NAME}" type=iso device-config:location="$ISO_DIR" device-config:legacy_mode=true content-type=iso)
     pbd_uuid=$(xe pbd-list sr-uuid="$sr_uuid" host-uuid="$host_uuid" --minimal)
     if [[ -z "$pbd_uuid" ]]; then
       pbd_uuid=$(xe pbd-create sr-uuid="$sr_uuid" host-uuid="$host_uuid" device-config:location="$ISO_DIR" device-config:legacy_mode=true)
