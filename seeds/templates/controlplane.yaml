@@ -1,0 +1,61 @@
+# Talos control plane machineconfig
+version: v1alpha1
+machine:
+  type: controlplane
+  token: "REPLACE_WITH_CLUSTER_TOKEN"
+  install:
+    image: ghcr.io/siderolabs/installer:v1.7.6
+    disk: /dev/xvda
+    wipe: true
+  kubelet:
+    extraArgs:
+      cloud-provider: external
+      rotate-server-certificates: "true"
+      feature-gates: RotateKubeletServerCertificate=true
+  sysctls:
+    net.ipv4.ip_forward: "1"
+    net.ipv4.conf.all.rp_filter: "0"
+    net.ipv4.conf.default.rp_filter: "0"
+  time:
+    servers:
+      - pool.ntp.org
+  # network: будет добавлен скриптом
+cluster:
+  id: "REPLACE_WITH_CLUSTER_ID"        # talosctl gen config создаёт автоматически; можно оставить свой UUID
+  secret: "REPLACE_WITH_CLUSTER_SECRET"
+  clusterName: "talos-xcp"
+  controlPlane:
+    endpoint: "https://192.168.10.2:6443"   # будет перезаписан скриптом, можно оставить так
+  network:
+    cni:
+      name: none
+    podSubnets:
+      - 10.244.0.0/16
+    serviceSubnets:
+      - 10.96.0.0/12
+  apiServer:
+    certSANs:
+      - 192.168.10.2
+      - 192.168.10.3
+      - 192.168.10.4
+      - "cp1.local"       # при необходимости добавьте свои имена
+      - "cp2.local"
+      - "cp3.local"
+    extraArgs:
+      service-account-issuer: kubernetes.default.svc
+      service-account-jwks-uri: https://kubernetes.default.svc/openid/v1/jwks
+  controllerManager: {}
+  scheduler: {}
+  etcd:
+    extraArgs:
+      listen-metrics-urls: http://0.0.0.0:2381
+    advertiseClientURLs:
+      - https://0.0.0.0:2379
+    listenClientURLs:
+      - https://0.0.0.0:2379
+  discovery:
+    registries:
+      kubernetes: {}
+      service: {}
+  inlineManifests: []
+  # После развёртывания поставьте CNI (например, Cilium/Calico) через talosctl apply -f ...

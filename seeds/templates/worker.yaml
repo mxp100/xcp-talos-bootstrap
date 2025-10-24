@@ -1,0 +1,40 @@
+# Talos worker machineconfig
+version: v1alpha1
+machine:
+  type: worker
+  token: "REPLACE_WITH_CLUSTER_TOKEN"
+  install:
+    image: ghcr.io/siderolabs/installer:v1.7.6
+    disk: /dev/xvda
+    wipe: true
+  kubelet:
+    extraArgs:
+      cloud-provider: external
+      rotate-server-certificates: "true"
+      feature-gates: RotateKubeletServerCertificate=true
+  sysctls:
+    net.ipv4.ip_forward: "1"
+    net.ipv4.conf.all.rp_filter: "0"
+    net.ipv4.conf.default.rp_filter: "0"
+  time:
+    servers:
+      - pool.ntp.org
+  # network: будет добавлен скриптом
+cluster:
+  id: "REPLACE_WITH_CLUSTER_ID"
+  secret: "REPLACE_WITH_CLUSTER_SECRET"
+  clusterName: "talos-xcp"
+  controlPlane:
+    endpoint: "https://192.168.10.2:6443"  # будет перезаписан скриптом при необходимости
+  network:
+    cni:
+      name: none
+    podSubnets:
+      - 10.244.0.0/16
+    serviceSubnets:
+      - 10.96.0.0/12
+  discovery:
+    registries:
+      kubernetes: {}
+      service: {}
+  inlineManifests: []
