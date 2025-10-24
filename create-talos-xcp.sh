@@ -345,6 +345,7 @@ reconcile_group() {
     vm_uuid=$(create_vm "$name" "$vcpu" "$ram" "$disk" "$net_uuid" "$sr_uuid" "$kargs")
     echo "VM UUID: $vm_uuid"
     attach_iso "$vm_uuid" "$ISO_LOCAL_PATH"
+    echo "Disk source attached"
     local seed_iso
     seed_iso=$(create_seed_iso_from_mc "$name" "$ip" "$role")
     attach_second_iso "$vm_uuid" "$seed_iso"
