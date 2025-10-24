@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+xe_try() { xe "$@" 2>&1; }
+
 # ========= CONFIG =========
 CLUSTER_NAME="talos-xcp"
 NETWORK_NAME="vnic"                         # name-label сети в XCP-ng (меняйте при необходимости)
@@ -228,12 +230,23 @@ reconcile_group() {
     talos_cd=$(basename "$ISO_LOCAL_PATH")
     attach_iso "$vm_uuid" "$talos_cd"
     # Second ISO: per-VM seed; create file and rescan SR to expose it
-    local seed_iso
+    local vm_uuid
+    vm_uuid=$(create_vm "$name" "$vcpu" "$ram" "$disk" "$net_uuid" "$sr_uuid" "$kargs")
+    if [[ -z "$vm_uuid" ]]; then
+      echo "create_vm returned empty UUID for $name"
+      exit 1
+    fi
+
+    local talos_cd
+    talos_cd=$(basename "$ISO_LOCAL_PATH")
+    attach_iso "$vm_uuid" "$talos_cd"
+
+    local seed_iso seed_cd
     seed_iso=$(create_seed_iso_from_mc "$name" "$ip" "$role")
     xe sr-scan uuid="$(xe sr-list name-label="${ISO_SR_NAME}" --minimal)" >/dev/null 2>&1 || true
-    local seed_cd
-    seed_cd=$(import_seed_into_iso_sr "$seed_iso")
+    seed_cd=$(basename "$seed_iso")
     attach_second_iso "$vm_uuid" "$seed_cd"
+
     echo "Created VM: $name ($ip) uuid=$vm_uuid"
   done
 
@@ -290,14 +303,16 @@ create_vm() {
     exit 1
   fi
 
-  # Clone with a simple retry
+  # Clone with retry
+  local out
   for _ in 1 2 3; do
-    vm_uuid=$(xe vm-clone new-name-label="$name" uuid="$template_uuid" 2>/dev/null || true)
-    [[ -n "$vm_uuid" ]] && break
+    out=$(xe_try vm-clone new-name-label="$name" uuid="$template_uuid" || true)
+    vm_uuid=$(echo "$out" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
+    [[ -n "${vm_uuid:-}" ]] && break
     sleep 1
   done
-  if [[ -z "$vm_uuid" ]]; then
-    echo "Failed to clone template into VM $name"
+  if [[ -z "${vm_uuid:-}" ]]; then
+    echo "vm-clone failed for $name: $out"
     exit 1
   fi
 
@@ -315,22 +330,26 @@ create_vm() {
 
   # vNIC
   local vif_uuid
-  vif_uuid=$(xe vif-create vm-uuid="$vm_uuid" network-uuid="$net_uuid" device=0)
+  out=$(xe_try vif-create vm-uuid="$vm_uuid" network-uuid="$net_uuid" device=0 || true)
+  vif_uuid=$(echo "$out" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
   if [[ -z "$vif_uuid" ]]; then
-    echo "Failed to create VIF for $name"
+    echo "vif-create failed for $name: $out"
     exit 1
   fi
   xe_must vif-param-set uuid="$vif_uuid" other-config:ethtool-gso="off"
 
   # Disk
-  vdi_uuid=$(xe vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=user virtual-size="$(printf '%d' $((disk_gib * 1024 * 1024 * 1024)))")
+  local vdi_uuid vbduuid
+  out=$(xe_try vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=user virtual-size="$(printf '%d' $((disk_gib * 1024 * 1024 * 1024)))" || true)
+  vdi_uuid=$(echo "$out" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
   if [[ -z "$vdi_uuid" ]]; then
-    echo "Failed to create VDI for $name"
+    echo "vdi-create failed for $name: $out"
     exit 1
   fi
-  vbduuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW)
+  out=$(xe_try vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW || true)
+  vbduuid=$(echo "$out" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
   if [[ -z "$vbduuid" ]]; then
-    echo "Failed to create VBD for $name"
+    echo "vbd-create failed for $name: $out"
     exit 1
   fi
   xe_must vbd-param-set uuid="$vbduuid" userdevice=0
