@@ -417,10 +417,7 @@ create_vm() {
 
   # Set memory with proper static and dynamic values
   local bytes=$((ram_gib*1024*1024*1024))
-  xe_must vm-param-set uuid="$vm_uuid" memory-static-min="$bytes"
-  xe_must vm-param-set uuid="$vm_uuid" memory-dynamic-min="$bytes"
-  xe_must vm-param-set uuid="$vm_uuid" memory-dynamic-max="$bytes"
-  xe_must vm-param-set uuid="$vm_uuid" memory-static-max="$bytes"
+  xe_must vm-memory-set uuid="$vm_uuid" memory="$bytes"
 
   # vCPU
   xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
