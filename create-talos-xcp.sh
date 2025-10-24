@@ -6,7 +6,7 @@ CLUSTER_NAME="talos-xcp"
 NETWORK_NAME="vnic"                         # name-label сети в XCP-ng (меняйте при необходимости)
 SR_NAME=""                                  # оставить пустым чтобы выбрать default SR
 ISO_URL="https://github.com/siderolabs/talos/releases/download/v1.11.3/metal-amd64.iso"
-ISO_LOCAL_PATH="/opt/iso/metal-amd64.iso"
+ISO_LOCAL_PATH="/opt/iso/talos-amd64.iso"
 ISO_SR_NAME="ISO SR"
 VM_BASE_NAME_CP="${CLUSTER_NAME}-cp"
 VM_BASE_NAME_WK="${CLUSTER_NAME}-wk"
@@ -74,6 +74,9 @@ import_iso_if_needed() {
     wget -O "$ISO_LOCAL_PATH" "$ISO_URL"
   fi
   ensure_iso_sr
+  # Refresh ISO SR so xe sees the file
+  xe-mount-iso-sr() { :; } # placeholder to avoid set -e on subshells
+  xe sr-scan uuid="$(xe sr-list name-label="${ISO_SR_NAME}" --minimal)" >/dev/null 2>&1 || true
   echo "Talos ISO ready at $ISO_LOCAL_PATH"
 }
 
@@ -82,93 +85,23 @@ find_network_uuid() {
   xe network-list name-label="$name" --minimal
 }
 
-create_seed_iso_from_mc() {
-  # Генерирует seed ISO (cidata) для Talos c network статикой и machineconfig
-  # user-data: talos machineconfig с вшитой сетью
-  # meta-data: уникальные hostname/instance-id
-  local vmname="$1"
-  local ip="$2"
-  local role="$3"          # cp | wk
-  local out_iso="${ISO_DIR}/${vmname}-seed.iso"
-
-  local src_dir="${SEEDS_DIR}/${vmname}"
-  mkdir -p "$src_dir"
-
-  # Выбор шаблона machineconfig
-  local template_file
-  if [[ "$role" == "cp" ]]; then
-    template_file="$CP_TEMPLATE"
-  else
-    template_file="$WK_TEMPLATE"
-  fi
-
-  if [[ ! -f "$template_file" ]]; then
-    echo "Template not found: $template_file"
+# Import seed ISO file into ISO SR and return its cd-name
+import_seed_into_iso_sr() {
+  local iso_path="$1"
+  local iso_sr_uuid
+  iso_sr_uuid=$(xe sr-list name-label="${ISO_SR_NAME}" --minimal)
+  if [[ -z "$iso_sr_uuid" ]]; then
+    echo "ISO SR '${ISO_SR_NAME}' not found"
     exit 1
   fi
-
-  # Собираем user-data: вставляем сеть в machineconfig
-  # Пример блока сети Talos (metal):
-  #   network:
-  #     interfaces:
-  #       - interface: eth0
-  #         addresses:
-  #           - 192.168.10.2/24
-  #         routes:
-  #           - network: 0.0.0.0/0
-  #             gateway: 192.168.10.1
-  #         dhcp: false
-  #     dns:
-  #       servers:
-  #         - 1.1.1.1
-  cat > "${src_dir}/user-data" <<'EOF'
-#cloud-config
-EOF
-
-  {
-    echo "# talos machineconfig follows"
-    # Вставляем содержимое шаблона
-    cat "$template_file"
-    echo ""
-    echo "network:"
-    echo "  interfaces:"
-    echo "    - interface: eth0"
-    echo "      dhcp: false"
-    echo "      addresses:"
-    echo "        - ${IP_CIDR}"
-    echo "      routes:"
-    echo "        - network: 0.0.0.0/0"
-    echo "          gateway: ${GW}"
-    echo "  dns:"
-    echo "    servers:"
-    echo "      - ${DNS}"
-    echo ""
-    echo "cluster:"
-    echo "  endpoint: ${ENDPOINT}"
-  } | IP_CIDR="${ip}/${CIDR_PREFIX}" GW="${GATEWAY}" DNS="${DNS_SERVER}" ENDPOINT="${TALOS_ENDPOINT}" tee -a "${src_dir}/user-data" >/dev/null
-
-  # meta-data
-  cat > "${src_dir}/meta-data" <<EOF
-instance-id: ${vmname}
-local-hostname: ${vmname}
-EOF
-
-  # Сборка ISO
-  echo "Creating seed ISO for $vmname at $out_iso"
-  if command -v genisoimage >/dev/null 2>&1; then
-    genisoimage -quiet -volid cidata -joliet -rock -o "$out_iso" -graft-points "user-data=${src_dir}/user-data" "meta-data=${src_dir}/meta-data"
-  else
-    mkisofs -quiet -V cidata -J -R -o "$out_iso" -graft-points "user-data=${src_dir}/user-data" "meta-data=${src_dir}/meta-data"
-  fi
-
-  echo "$out_iso"
+  # File is already in $ISO_DIR; ensure SR is rescanned
+  xe sr-scan uuid="$iso_sr_uuid" >/dev/null 2>&1 || true
+  basename "$iso_path"
 }
 
 attach_iso() {
   local vm_uuid="$1"
-  local iso_path="$2"
-  local iso_name
-  iso_name=$(basename "$iso_path")
+  local iso_name="$2"   # cd-name visible in ISO SR
   local cd_vbd
   cd_vbd=$(xe vbd-list vm-uuid="$vm_uuid" type=CD --minimal)
   if [[ -z "$cd_vbd" ]]; then
@@ -180,12 +113,14 @@ attach_iso() {
 
 attach_second_iso() {
   local vm_uuid="$1"
-  local iso_path="$2"
-  local iso_name
-  iso_name=$(basename "$iso_path")
-  local cd_vbd2
-  cd_vbd2=$(xe vbd-create vm-uuid="$vm_uuid" type=CD device=4 bootable=false mode=RO empty=true)
-  xe_must vbd-param-set uuid="$cd_vbd2" userdevice=4
+  local iso_name="$2"
+  local existing
+  existing=$(xe vbd-list vm-uuid="$vm_uuid" type=CD params=userdevice --minimal | tr , '\n' | grep -Fx "4" || true)
+  if [[ -z "$existing" ]]; then
+    local cd_vbd2
+    cd_vbd2=$(xe vbd-create vm-uuid="$vm_uuid" type=CD device=4 bootable=false mode=RO empty=true)
+    xe_must vbd-param-set uuid="$cd_vbd2" userdevice=4
+  fi
   xe_must vm-cd-add vm="$vm_uuid" cd-name="$iso_name" device=4
 }
 
@@ -257,6 +192,11 @@ reconcile_group() {
   local ram="$8"
   local disk="$9"
 
+  if [[ -z "$net_uuid" || -z "$sr_uuid" ]]; then
+    echo "Missing network or SR UUID"
+    exit 1
+  fi
+
   # Создадим недостающие 1..desired
   for i in $(seq 1 "$desired"); do
     local name="${base}${i}"
@@ -279,10 +219,17 @@ reconcile_group() {
 
     local vm_uuid
     vm_uuid=$(create_vm "$name" "$vcpu" "$ram" "$disk" "$net_uuid" "$sr_uuid" "$kargs")
-    attach_iso "$vm_uuid" "$ISO_LOCAL_PATH"
+    # First ISO: Talos installer (file must exist in ISO SR)
+    local talos_cd
+    talos_cd=$(basename "$ISO_LOCAL_PATH")
+    attach_iso "$vm_uuid" "$talos_cd"
+    # Second ISO: per-VM seed; create file and rescan SR to expose it
     local seed_iso
     seed_iso=$(create_seed_iso_from_mc "$name" "$ip" "$role")
-    attach_second_iso "$vm_uuid" "$seed_iso"
+    xe sr-scan uuid="$(xe sr-list name-label="${ISO_SR_NAME}" --minimal)" >/dev/null 2>&1 || true
+    local seed_cd
+    seed_cd=$(import_seed_into_iso_sr "$seed_iso")
+    attach_second_iso "$vm_uuid" "$seed_cd"
     echo "Created VM: $name ($ip) uuid=$vm_uuid"
   done
 
@@ -292,7 +239,7 @@ reconcile_group() {
     local names
     names=$(xe vm-list is-control-domain=false params=name-label --minimal | tr , '\n' | grep -E "^${base}[0-9]+$" || true)
     if [[ -n "$names" ]]; then
-      while IFS= read -r existing; do
+      while IFS= read -r -a existing; do
         [[ -z "$existing" ]] && continue
         local idx
         idx=$(echo "$existing" | sed -E "s/^${base}([0-9]+)$/\1/")
@@ -316,10 +263,23 @@ create_vm() {
   local sr_uuid="$6"
   local kernel_args="$7"
 
+  if ! [[ "$vcpu" =~ ^[0-9]+$ && "$ram_gib" =~ ^[0-9]+$ && "$disk_gib" =~ ^[0-9]+$ ]]; then
+    echo "Invalid CPU, RAM, or disk size for $name"
+    exit 1
+  fi
+  if [[ -z "$net_uuid" || -z "$sr_uuid" ]]; then
+    echo "Missing net or SR UUID for $name"
+    exit 1
+  fi
+
   echo "Creating VM $name"
   local template_uuid vm_uuid vdi_uuid vbduuid vif_uuid
 
   template_uuid=$(xe template-list name-label="Other install media" --minimal)
+  if [[ -z "$template_uuid" ]]; then
+    echo "Template 'Other install media' not found"
+    exit 1
+  fi
   vm_uuid=$(xe vm-clone new-name-label="$name" uuid="$template_uuid")
   xe_must vm-param-set uuid="$vm_uuid" is-a-template=false
   xe_must vm-param-set uuid="$vm_uuid" name-description="Talos Linux node"
@@ -334,6 +294,10 @@ create_vm() {
 
   # Диск
   vdi_uuid=$(xe vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=User virtual-size=$((disk_gib*1024*1024*1024)))
+  if [[ -z "$vdi_uuid" ]]; then
+    echo "Failed to create VDI for $name"
+    exit 1
+  fi
   vbduuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW)
   xe_must vbd-param-set uuid="$vbduuid" userdevice=0
 
@@ -372,10 +336,11 @@ main() {
   fi
 
   import_iso_if_needed
+  # Ensure ISO SR sees the Talos ISO and future seed ISOs
+  xe sr-scan uuid="$(xe sr-list name-label="${ISO_SR_NAME}" --minimal)" >/dev/null 2>&1 || true
 
   # Reconcile Control-plane
   reconcile_group "$VM_BASE_NAME_CP" "$CP_COUNT" "$net_uuid" "$sr_uuid" "$KERNEL_ARGS" "cp" 2 4 20
-
   # Reconcile Workers
   reconcile_group "$VM_BASE_NAME_WK" "$WK_COUNT" "$net_uuid" "$sr_uuid" "$KERNEL_ARGS" "wk" 4 16 100
 
