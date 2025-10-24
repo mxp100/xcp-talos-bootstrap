@@ -219,6 +219,10 @@ reconcile_group() {
 
     local vm_uuid
     vm_uuid=$(create_vm "$name" "$vcpu" "$ram" "$disk" "$net_uuid" "$sr_uuid" "$kargs")
+    if [[ -z "$vm_uuid" ]]; then
+      echo "Failed to create VM $name"
+      exit 1
+    fi
     # First ISO: Talos installer (file must exist in ISO SR)
     local talos_cd
     talos_cd=$(basename "$ISO_LOCAL_PATH")
@@ -282,24 +286,39 @@ create_vm() {
     exit 1
   fi
   vm_uuid=$(xe vm-clone new-name-label="$name" uuid="$template_uuid")
+  if [[ -z "$vm_uuid" ]]; then
+    echo "Failed to clone template for $name"
+    exit 1
+  fi
   xe_must vm-param-set uuid="$vm_uuid" is-a-template=false
   xe_must vm-param-set uuid="$vm_uuid" name-description="Talos Linux node"
 
   xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
-  local bytes=$((ram_gib*1024*1024*1024))
-  xe_must vm-memory-set uuid="$vm_uuid" static-min=$bytes dynamic-min=$bytes dynamic-max=$bytes static-max=$bytes
+
+  # Use printf for 64-bit-safe arithmetic and quote values
+  local bytes
+  bytes=$(printf '%d' $((ram_gib * 1024 * 1024 * 1024)))
+  xe_must vm-memory-set uuid="$vm_uuid" static-min="$bytes" dynamic-min="$bytes" dynamic-max="$bytes" static-max="$bytes"
 
   # vNIC
   vif_uuid=$(xe vif-create vm-uuid="$vm_uuid" network-uuid="$net_uuid" device=0)
+  if [[ -z "$vif_uuid" ]]; then
+    echo "Failed to create VIF for $name"
+    exit 1
+  fi
   xe_must vif-param-set uuid="$vif_uuid" other-config:ethtool-gso="off"
 
-  # Disk (type must be lowercase 'user')
-  vdi_uuid=$(xe vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=user virtual-size=$((disk_gib*1024*1024*1024)))
+  # Disk
+  vdi_uuid=$(xe vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=user virtual-size="$(printf '%d' $((disk_gib * 1024 * 1024 * 1024)))")
   if [[ -z "$vdi_uuid" ]]; then
     echo "Failed to create VDI for $name"
     exit 1
   fi
   vbduuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW)
+  if [[ -z "$vbduuid" ]]; then
+    echo "Failed to create VBD for $name"
+    exit 1
+  fi
   xe_must vbd-param-set uuid="$vbduuid" userdevice=0
 
   # PV boot
