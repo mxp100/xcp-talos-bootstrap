@@ -409,7 +409,7 @@ create_vm() {
   xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
   # Ensure memory is set BEFORE any other operations that could query it
   local bytes=$((ram_gib*1024*1024*1024))
-  xe_must vm-memory-set uuid="$vm_uuid" memory=$bytes
+  xe_must vm-memory-set uuid="$vm_uuid" memory="$bytes"
 
   # vCPU
   xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
