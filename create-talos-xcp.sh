@@ -402,7 +402,7 @@ create_vm() {
   xe_must vm-param-set uuid="$vm_uuid" name-description="Talos Linux node"
 
   xe_must vm-param-set uuid="$vm_uuid" HVM-boot-policy="" # ensure PV mode available
-  xe_must vm-param-set uuid="$vm_uuid" HVM-boot-params: order=""
+  xe_must vm-param-set uuid="$vm_uuid" HVM-boot-params:order=""
   xe_must vm-param-set uuid="$vm_uuid" platform:device-model="qemu-upstream-compat"
   xe_must vm-param-set uuid="$vm_uuid" platform:videoram="8"
 
