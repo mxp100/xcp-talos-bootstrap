@@ -40,7 +40,7 @@ ISO_DIR="/opt/iso"
 KERNEL_ARGS=""
 
 # ========= Helpers =========
-xe_must() { xe "$@"; }
+xe_must() { xe "$@" >/dev/null; }
 
 get_default_sr() {
   xe pool-list --minimal | xargs -I{} xe pool-param-get uuid={} param-name=default-SR
@@ -349,7 +349,7 @@ create_vm() {
   xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
   # Ensure memory is set BEFORE any other operations that could query it
   local bytes=$((ram_gib*1024*1024*1024))
-  xe_must vm-memory-set uuid="$vm_uuid" static-min=$bytes dynamic-min=$bytes dynamic-max=$bytes static-max=$bytes
+  xe_must vm-memory-set uuid="$vm_uuid" memory=$bytes
 
   # vCPU
   xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
