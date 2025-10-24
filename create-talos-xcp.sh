@@ -141,34 +141,29 @@ create_seed_iso_from_mc() {
     exit 1
   fi
 
-  # Собираем user-data: вставляем сеть в machineconfig
-  cat > "${src_dir}/user-data" <<'EOF'
-#cloud-config
-EOF
-
   local ip_cidr="${ip}/${CIDR_PREFIX}"
   
-  {
-    echo "# talos machineconfig follows"
-    # Вставляем содержимое шаблона
-    cat "$template_file"
-    echo ""
-    echo "network:"
-    echo "  interfaces:"
-    echo "    - interface: eth0"
-    echo "      dhcp: false"
-    echo "      addresses:"
-    echo "        - ${ip_cidr}"
-    echo "      routes:"
-    echo "        - network: 0.0.0.0/0"
-    echo "          gateway: ${GATEWAY}"
-    echo "  dns:"
-    echo "    servers:"
-    echo "      - ${DNS_SERVER}"
-    echo ""
-    echo "cluster:"
-    echo "  endpoint: ${TALOS_ENDPOINT}"
-  } >> "${src_dir}/user-data"
+  # Создаем полный machineconfig с правильной секцией network
+  cat "$template_file" > "${src_dir}/user-data"
+  
+  # Добавляем секцию network (если её еще нет в шаблоне)
+  cat >> "${src_dir}/user-data" <<EOF
+machine:
+  network:
+    hostname: ${vmname}
+    interfaces:
+      - interface: eth0
+        dhcp: false
+        addresses:
+          - ${ip_cidr}
+        routes:
+          - network: 0.0.0.0/0
+            gateway: ${GATEWAY}
+    nameservers:
+      - ${DNS_SERVER}
+cluster:
+  network: {}
+EOF
 
   # meta-data
   cat > "${src_dir}/meta-data" <<EOF
