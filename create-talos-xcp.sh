@@ -12,6 +12,7 @@ VM_BASE_NAME_CP="${CLUSTER_NAME}-cp"
 VM_BASE_NAME_WK="${CLUSTER_NAME}-wk"
 CP_COUNT=3
 WK_COUNT=3
+RECONCILE=true   # если true — добавляем недостающие и удаляем лишние ВМ для соответствия CP_COUNT/WK_COUNT
 
 # IP-параметры
 GATEWAY="192.168.10.1"
@@ -188,6 +189,124 @@ attach_second_iso() {
   xe_must vm-cd-add vm="$vm_uuid" cd-name="$iso_name" device=4
 }
 
+vm_exists_by_name() {
+  local name="$1"
+  local uuid
+  uuid=$(xe vm-list name-label="$name" is-control-domain=false --minimal)
+  [[ -n "$uuid" ]]
+}
+
+get_vm_uuid_by_name() {
+  local name="$1"
+  xe vm-list name-label="$name" is-control-domain=false --minimal
+}
+
+destroy_vm_by_uuid() {
+  local uuid="$1"
+  local power_state
+  power_state=$(xe vm-param-get uuid="$uuid" param-name=power-state || true)
+  if [[ "$power_state" == "running" ]]; then
+    xe_must vm-shutdown uuid="$uuid"
+  fi
+  # Удаляем все VBD/VIF, затем саму ВМ и ее диски
+  local vbds vifs
+  vbds=$(xe vbd-list vm-uuid="$uuid" --minimal || true)
+  if [[ -n "$vbds" ]]; then
+    IFS=, read -r -a vbd_arr <<< "$vbds"
+    for vbd in "${vbd_arr[@]}"; do
+      # попытаться отсоединить, затем уничтожить
+      xe vbd-unplug uuid="$vbd" >/dev/null 2>&1 || true
+      xe_must vbd-destroy uuid="$vbd"
+    done
+  fi
+  vifs=$(xe vif-list vm-uuid="$uuid" --minimal || true)
+  if [[ -n "$vifs" ]]; then
+    IFS=, read -r -a vif_arr <<< "$vifs"
+    for vif in "${vif_arr[@]}"; do
+      xe_must vif-destroy uuid="$vif"
+    done
+  fi
+
+  # Сохраним список VDI до уничтожения ВМ, чтобы убрать и диски
+  local vdis
+  vdis=$(xe vdi-list name-label | grep "$uuid-does-not-match" >/dev/null 2>&1 || true) # placeholder to keep shell safe
+
+  # Получим VDI связанные с ВМ через VBD до удаления (еще раз)
+  local vdi_list
+  vdi_list=$(xe vbd-list vm-uuid="$uuid" params=vdi-uuid --minimal 2>/dev/null || true)
+
+  xe_must vm-uninstall uuid="$uuid" force=true
+
+  if [[ -n "$vdi_list" ]]; then
+    IFS=, read -r -a vdi_arr <<< "$vdi_list"
+    for vdi in "${vdi_arr[@]}"; do
+      [[ -n "$vdi" ]] && xe_must vdi-destroy uuid="$vdi"
+    done
+  fi
+}
+
+reconcile_group() {
+  # $1 base name prefix, $2 desired count, $3 net_uuid, $4 sr_uuid, $5 kargs, $6 role(cp|wk), $7 vcpu, $8 ramGiB, $9 diskGiB
+  local base="$1"
+  local desired="$2"
+  local net_uuid="$3"
+  local sr_uuid="$4"
+  local kargs="$5"
+  local role="$6"
+  local vcpu="$7"
+  local ram="$8"
+  local disk="$9"
+
+  # Создадим недостающие 1..desired
+  for i in $(seq 1 "$desired"); do
+    local name="${base}${i}"
+    if vm_exists_by_name "$name"; then
+      echo "VM exists: $name"
+      continue
+    fi
+
+    # Определяем IP из соответствующего массива
+    local ip=""
+    if [[ "$role" == "cp" ]]; then
+      ip="${CP_IPS[$((i-1))]}"
+    else
+      ip="${WK_IPS[$((i-1))]}"
+    fi
+    if [[ -z "$ip" ]]; then
+      echo "No IP configured for $name, skip."
+      continue
+    fi
+
+    local vm_uuid
+    vm_uuid=$(create_vm "$name" "$vcpu" "$ram" "$disk" "$net_uuid" "$sr_uuid" "$kargs")
+    attach_iso "$vm_uuid" "$ISO_LOCAL_PATH"
+    local seed_iso
+    seed_iso=$(create_seed_iso_from_mc "$name" "$ip" "$role")
+    attach_second_iso "$vm_uuid" "$seed_iso"
+    echo "Created VM: $name ($ip) uuid=$vm_uuid"
+  done
+
+  # Если нужно — удалим лишние (индексы > desired)
+  if [[ "${RECONCILE}" == "true" ]]; then
+    # Найдем все ВМ по префиксу base
+    local names
+    names=$(xe vm-list is-control-domain=false params=name-label --minimal | tr , '\n' | grep -E "^${base}[0-9]+$" || true)
+    if [[ -n "$names" ]]; then
+      while IFS= read -r existing; do
+        [[ -z "$existing" ]] && continue
+        local idx
+        idx=$(echo "$existing" | sed -E "s/^${base}([0-9]+)$/\1/")
+        if [[ "$idx" -gt "$desired" ]]; then
+          local uuid
+          uuid=$(get_vm_uuid_by_name "$existing")
+          echo "Removing extra VM: $existing uuid=$uuid"
+          destroy_vm_by_uuid "$uuid"
+        fi
+      done <<< "$names"
+    fi
+  fi
+}
+
 create_vm() {
   local name="$1"
   local vcpu="$2"
@@ -254,34 +373,13 @@ main() {
 
   import_iso_if_needed
 
-  # Control-plane
-  for i in $(seq 1 "$CP_COUNT"); do
-    local name="${VM_BASE_NAME_CP}${i}"
-    local ip="${CP_IPS[$((i-1))]}"
-    local vm_uuid
-    vm_uuid=$(create_vm "$name" 2 4 20 "$net_uuid" "$sr_uuid" "$KERNEL_ARGS")
-    attach_iso "$vm_uuid" "$ISO_LOCAL_PATH"
-    local seed_iso
-    seed_iso=$(create_seed_iso_from_mc "$name" "$ip" "cp")
-    attach_second_iso "$vm_uuid" "$seed_iso"
-    echo "Created CP VM: $name ($ip) uuid=$vm_uuid"
-  done
+  # Reconcile Control-plane
+  reconcile_group "$VM_BASE_NAME_CP" "$CP_COUNT" "$net_uuid" "$sr_uuid" "$KERNEL_ARGS" "cp" 2 4 20
 
-  # Workers
-  for i in $(seq 1 "$WK_COUNT"); do
-    local name="${VM_BASE_NAME_WK}${i}"
-    local ip="${WK_IPS[$((i-1))]}"
-    local vm_uuid
-    vm_uuid=$(create_vm "$name" 4 16 100 "$net_uuid" "$sr_uuid" "$KERNEL_ARGS")
-    attach_iso "$vm_uuid" "$ISO_LOCAL_PATH"
-    local seed_iso
-    seed_iso=$(create_seed_iso_from_mc "$name" "$ip" "wk")
-    attach_second_iso "$vm_uuid" "$seed_iso"
-    echo "Created WK VM: $name ($ip) uuid=$vm_uuid"
-  done
+  # Reconcile Workers
+  reconcile_group "$VM_BASE_NAME_WK" "$WK_COUNT" "$net_uuid" "$sr_uuid" "$KERNEL_ARGS" "wk" 4 16 100
 
-  echo "Done. Start VMs when ready, e.g.:"
-  echo "xe vm-start name-label=${VM_BASE_NAME_CP}1"
+  echo "Done. Start/stop as needed, e.g.: xe vm-start name-label=${VM_BASE_NAME_CP}1"
 }
 
 main "$@"
