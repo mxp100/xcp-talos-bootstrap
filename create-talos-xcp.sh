@@ -188,6 +188,7 @@ EOF
 attach_iso() {
   local vm_uuid="$1"
   local iso_path="$2"
+  echo "VM: $vm_uuid"
   if [[ -z "$vm_uuid" ]]; then
     echo "attach_iso: VM uuid is empty"
     exit 1
