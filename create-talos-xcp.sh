@@ -41,7 +41,6 @@ KERNEL_ARGS=""
 
 # ========= Helpers =========
 xe_must() {
-  echo "xe $@"
   xe "$@" >/dev/null;
 }
 
