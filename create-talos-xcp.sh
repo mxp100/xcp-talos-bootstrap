@@ -411,22 +411,19 @@ create_vm() {
     xe_must vm-param-set uuid="$vm_uuid" PV-args="$kernel_args"
   fi
 
-  # Set memory with proper static and dynamic values
-  local bytes=$((ram_gib*1024*1024*1024))
-  xe_must vm-param-set uuid="$vm_uuid" memory-static-min="$bytes"
-  xe_must vm-param-set uuid="$vm_uuid" memory-static-max="$bytes"
-  xe_must vm-param-set uuid="$vm_uuid" memory-dynamic-min="$bytes"
-  xe_must vm-param-set uuid="$vm_uuid" memory-dynamic-max="$bytes"
-
-  # Set shadow multiplier for PV domain
-  xe_must vm-param-set uuid="$vm_uuid" HVM-shadow-multiplier=1.0
-
-  # vCPU
-  xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
-
   # Platform flags - minimal for PV mode
   xe_must vm-param-set uuid="$vm_uuid" platform:device-model=""
   xe_must vm-param-remove uuid="$vm_uuid" param-name=platform param-key=videoram 2>/dev/null || true
+
+  # Set memory with proper static and dynamic values
+  local bytes=$((ram_gib*1024*1024*1024))
+  xe_must vm-param-set uuid="$vm_uuid" memory-static-min="$bytes"
+  xe_must vm-param-set uuid="$vm_uuid" memory-dynamic-min="$bytes"
+  xe_must vm-param-set uuid="$vm_uuid" memory-dynamic-max="$bytes"
+  xe_must vm-param-set uuid="$vm_uuid" memory-static-max="$bytes"
+
+  # vCPU
+  xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
 
   # vNIC
   vif_uuid=$(xe vif-create vm-uuid="$vm_uuid" network-uuid="$net_uuid" device=0)
