@@ -146,6 +146,8 @@ create_seed_iso_from_mc() {
 #cloud-config
 EOF
 
+  local ip_cidr="${ip}/${CIDR_PREFIX}"
+  
   {
     echo "# talos machineconfig follows"
     # Вставляем содержимое шаблона
@@ -156,17 +158,17 @@ EOF
     echo "    - interface: eth0"
     echo "      dhcp: false"
     echo "      addresses:"
-    echo "        - ${IP_CIDR}"
+    echo "        - ${ip_cidr}"
     echo "      routes:"
     echo "        - network: 0.0.0.0/0"
-    echo "          gateway: ${GW}"
+    echo "          gateway: ${GATEWAY}"
     echo "  dns:"
     echo "    servers:"
-    echo "      - ${DNS}"
+    echo "      - ${DNS_SERVER}"
     echo ""
     echo "cluster:"
-    echo "  endpoint: ${ENDPOINT}"
-  } | IP_CIDR="${ip}/${CIDR_PREFIX}" GW="${GATEWAY}" DNS="${DNS_SERVER}" ENDPOINT="${TALOS_ENDPOINT}" tee -a "${src_dir}/user-data" >/dev/null
+    echo "  endpoint: ${TALOS_ENDPOINT}"
+  } >> "${src_dir}/user-data"
 
   # meta-data
   cat > "${src_dir}/meta-data" <<EOF
@@ -174,13 +176,13 @@ instance-id: ${vmname}
 local-hostname: ${vmname}
 EOF
 
-  # Сборка ISO
-  echo "Creating seed ISO for $vmname at $out_iso"
-  if command -v genisoimage >/dev/null 2>&1; then
-    genisoimage -quiet -volid cidata -joliet -rock -o "$out_iso" -graft-points "user-data=${src_dir}/user-data" "meta-data=${src_dir}/meta-data"
-  else
-    mkisofs -quiet -V cidata -J -R -o "$out_iso" -graft-points "user-data=${src_dir}/user-data" "meta-data=${src_dir}/meta-data"
+  # Check and install genisoimage if needed
+  if ! command -v genisoimage >/dev/null 2>&1; then
+    yum install -y genisoimage
   fi
+
+  # Сборка ISO
+  genisoimage -quiet -volid cidata -joliet -rock -o "$out_iso" -graft-points "user-data=${src_dir}/user-data" "meta-data=${src_dir}/meta-data"
 
   echo "$out_iso"
 }
