@@ -1,39 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-xe_try() { xe "$@" 2>&1; }
-
 # ========= CONFIG =========
 CLUSTER_NAME="talos-xcp"
-NETWORK_NAME="vnic"
-SR_NAME=""
+NETWORK_NAME="vnic"                         # name-label сети в XCP-ng (меняйте при необходимости)
+SR_NAME=""                                  # оставить пустым чтобы выбрать default SR
 ISO_URL="https://github.com/siderolabs/talos/releases/download/v1.11.3/metal-amd64.iso"
-ISO_LOCAL_PATH="/opt/iso/talos-amd64.iso"
+ISO_LOCAL_PATH="/var/iso/talos-amd64.iso"
 ISO_SR_NAME="ISO SR"
 VM_BASE_NAME_CP="${CLUSTER_NAME}-cp"
 VM_BASE_NAME_WK="${CLUSTER_NAME}-wk"
 CP_COUNT=3
 WK_COUNT=3
-RECONCILE=true
+RECONCILE=true   # если true — добавляем недостающие и удаляем лишние ВМ для соответствия CP_COUNT/WK_COUNT
 
-# IP
+# IP-параметры
 GATEWAY="192.168.10.1"
 CIDR_PREFIX="24"
 DNS_SERVER="1.1.1.1"
 
+# Диапазоны IP
 CP_IPS=("192.168.10.2" "192.168.10.3" "192.168.10.4")
 WK_IPS=("192.168.10.10" "192.168.10.11" "192.168.10.12")
 
+# Talos endpoint (можно указать VIP/адрес первого CP)
 TALOS_ENDPOINT="https://192.168.10.2:6443"
 
+# Пути к machineconfig-шаблонам (должны существовать до запуска)
+# Содержимое — стандартные talos machineconfig для controlplane/worker, без секции network (ниже вставим сеть).
 TEMPLATE_DIR="$(pwd)/seeds/templates"
 CP_TEMPLATE="${TEMPLATE_DIR}/controlplane.yaml"
 WK_TEMPLATE="${TEMPLATE_DIR}/worker.yaml"
 
+# Папка для генерации индивидуальных сидов
 SEEDS_DIR="$(pwd)/seeds"
 ISO_DIR="/var/iso"
 
-KERNEL_ARGS=""
+# Если используете talos.config.url вместо сидов, можно указать тут:
+KERNEL_ARGS=""  # пример: "talos.platform=metal talos.config.url=http://your/http/<name>.yaml"
 
 # ========= Helpers =========
 xe_must() { xe "$@" >/dev/null; }
@@ -70,9 +74,6 @@ import_iso_if_needed() {
     wget -O "$ISO_LOCAL_PATH" "$ISO_URL"
   fi
   ensure_iso_sr
-  # Refresh ISO SR so xe sees the file
-  xe-mount-iso-sr() { :; } # placeholder to avoid set -e on subshells
-  xe sr-scan uuid="$(xe sr-list name-label="${ISO_SR_NAME}" --minimal)" >/dev/null 2>&1 || true
   echo "Talos ISO ready at $ISO_LOCAL_PATH"
 }
 
@@ -81,23 +82,93 @@ find_network_uuid() {
   xe network-list name-label="$name" --minimal
 }
 
-# Import seed ISO file into ISO SR and return its cd-name
-import_seed_into_iso_sr() {
-  local iso_path="$1"
-  local iso_sr_uuid
-  iso_sr_uuid=$(xe sr-list name-label="${ISO_SR_NAME}" --minimal)
-  if [[ -z "$iso_sr_uuid" ]]; then
-    echo "ISO SR '${ISO_SR_NAME}' not found"
+create_seed_iso_from_mc() {
+  # Генерирует seed ISO (cidata) для Talos c network статикой и machineconfig
+  # user-data: talos machineconfig с вшитой сетью
+  # meta-data: уникальные hostname/instance-id
+  local vmname="$1"
+  local ip="$2"
+  local role="$3"          # cp | wk
+  local out_iso="${ISO_DIR}/${vmname}-seed.iso"
+
+  local src_dir="${SEEDS_DIR}/${vmname}"
+  mkdir -p "$src_dir"
+
+  # Выбор шаблона machineconfig
+  local template_file
+  if [[ "$role" == "cp" ]]; then
+    template_file="$CP_TEMPLATE"
+  else
+    template_file="$WK_TEMPLATE"
+  fi
+
+  if [[ ! -f "$template_file" ]]; then
+    echo "Template not found: $template_file"
     exit 1
   fi
-  # File is already in $ISO_DIR; ensure SR is rescanned
-  xe sr-scan uuid="$iso_sr_uuid" >/dev/null 2>&1 || true
-  basename "$iso_path"
+
+  # Собираем user-data: вставляем сеть в machineconfig
+  # Пример блока сети Talos (metal):
+  #   network:
+  #     interfaces:
+  #       - interface: eth0
+  #         addresses:
+  #           - 192.168.10.2/24
+  #         routes:
+  #           - network: 0.0.0.0/0
+  #             gateway: 192.168.10.1
+  #         dhcp: false
+  #     dns:
+  #       servers:
+  #         - 1.1.1.1
+  cat > "${src_dir}/user-data" <<'EOF'
+#cloud-config
+EOF
+
+  {
+    echo "# talos machineconfig follows"
+    # Вставляем содержимое шаблона
+    cat "$template_file"
+    echo ""
+    echo "network:"
+    echo "  interfaces:"
+    echo "    - interface: eth0"
+    echo "      dhcp: false"
+    echo "      addresses:"
+    echo "        - ${IP_CIDR}"
+    echo "      routes:"
+    echo "        - network: 0.0.0.0/0"
+    echo "          gateway: ${GW}"
+    echo "  dns:"
+    echo "    servers:"
+    echo "      - ${DNS}"
+    echo ""
+    echo "cluster:"
+    echo "  endpoint: ${ENDPOINT}"
+  } | IP_CIDR="${ip}/${CIDR_PREFIX}" GW="${GATEWAY}" DNS="${DNS_SERVER}" ENDPOINT="${TALOS_ENDPOINT}" tee -a "${src_dir}/user-data" >/dev/null
+
+  # meta-data
+  cat > "${src_dir}/meta-data" <<EOF
+instance-id: ${vmname}
+local-hostname: ${vmname}
+EOF
+
+  # Сборка ISO
+  echo "Creating seed ISO for $vmname at $out_iso"
+  if command -v genisoimage >/dev/null 2>&1; then
+    genisoimage -quiet -volid cidata -joliet -rock -o "$out_iso" -graft-points "user-data=${src_dir}/user-data" "meta-data=${src_dir}/meta-data"
+  else
+    mkisofs -quiet -V cidata -J -R -o "$out_iso" -graft-points "user-data=${src_dir}/user-data" "meta-data=${src_dir}/meta-data"
+  fi
+
+  echo "$out_iso"
 }
 
 attach_iso() {
   local vm_uuid="$1"
-  local iso_name="$2"   # cd-name visible in ISO SR
+  local iso_path="$2"
+  local iso_name
+  iso_name=$(basename "$iso_path")
   local cd_vbd
   cd_vbd=$(xe vbd-list vm-uuid="$vm_uuid" type=CD --minimal)
   if [[ -z "$cd_vbd" ]]; then
@@ -109,14 +180,12 @@ attach_iso() {
 
 attach_second_iso() {
   local vm_uuid="$1"
-  local iso_name="$2"
-  local existing
-  existing=$(xe vbd-list vm-uuid="$vm_uuid" type=CD params=userdevice --minimal | tr , '\n' | grep -Fx "4" || true)
-  if [[ -z "$existing" ]]; then
-    local cd_vbd2
-    cd_vbd2=$(xe vbd-create vm-uuid="$vm_uuid" type=CD device=4 bootable=false mode=RO empty=true)
-    xe_must vbd-param-set uuid="$cd_vbd2" userdevice=4
-  fi
+  local iso_path="$2"
+  local iso_name
+  iso_name=$(basename "$iso_path")
+  local cd_vbd2
+  cd_vbd2=$(xe vbd-create vm-uuid="$vm_uuid" type=CD device=4 bootable=false mode=RO empty=true)
+  xe_must vbd-param-set uuid="$cd_vbd2" userdevice=4
   xe_must vm-cd-add vm="$vm_uuid" cd-name="$iso_name" device=4
 }
 
@@ -158,9 +227,16 @@ destroy_vm_by_uuid() {
     done
   fi
 
+  # Сохраним список VDI до уничтожения ВМ, чтобы убрать и диски
+  local vdis
+  vdis=$(xe vdi-list name-label | grep "$uuid-does-not-match" >/dev/null 2>&1 || true) # placeholder to keep shell safe
+
+  # Получим VDI связанные с ВМ через VBD до удаления (еще раз)
   local vdi_list
   vdi_list=$(xe vbd-list vm-uuid="$uuid" params=vdi-uuid --minimal 2>/dev/null || true)
+
   xe_must vm-uninstall uuid="$uuid" force=true
+
   if [[ -n "$vdi_list" ]]; then
     IFS=, read -r -a vdi_arr <<< "$vdi_list"
     for vdi in "${vdi_arr[@]}"; do
@@ -180,11 +256,6 @@ reconcile_group() {
   local vcpu="$7"
   local ram="$8"
   local disk="$9"
-
-  if [[ -z "$net_uuid" || -z "$sr_uuid" ]]; then
-    echo "Missing network or SR UUID"
-    exit 1
-  fi
 
   # Создадим недостающие 1..desired
   for i in $(seq 1 "$desired"); do
@@ -208,32 +279,10 @@ reconcile_group() {
 
     local vm_uuid
     vm_uuid=$(create_vm "$name" "$vcpu" "$ram" "$disk" "$net_uuid" "$sr_uuid" "$kargs")
-    if [[ -z "$vm_uuid" ]]; then
-      echo "Failed to create VM $name"
-      exit 1
-    fi
-    # First ISO: Talos installer (file must exist in ISO SR)
-    local talos_cd
-    talos_cd=$(basename "$ISO_LOCAL_PATH")
-    attach_iso "$vm_uuid" "$talos_cd"
-    # Second ISO: per-VM seed; create file and rescan SR to expose it
-    local vm_uuid
-    vm_uuid=$(create_vm "$name" "$vcpu" "$ram" "$disk" "$net_uuid" "$sr_uuid" "$kargs")
-    if [[ -z "$vm_uuid" ]]; then
-      echo "Failed to create VM $name"
-      exit 1
-    fi
-
-    local talos_cd
-    talos_cd=$(basename "$ISO_LOCAL_PATH")
-    attach_iso "$vm_uuid" "$talos_cd"
-
-    local seed_iso seed_cd
+    attach_iso "$vm_uuid" "$ISO_LOCAL_PATH"
+    local seed_iso
     seed_iso=$(create_seed_iso_from_mc "$name" "$ip" "$role")
-    xe sr-scan uuid="$(xe sr-list name-label="${ISO_SR_NAME}" --minimal)" >/dev/null 2>&1 || true
-    seed_cd=$(basename "$seed_iso")
-    attach_second_iso "$vm_uuid" "$seed_cd"
-
+    attach_second_iso "$vm_uuid" "$seed_iso"
     echo "Created VM: $name ($ip) uuid=$vm_uuid"
   done
 
@@ -243,7 +292,7 @@ reconcile_group() {
     local names
     names=$(xe vm-list is-control-domain=false params=name-label --minimal | tr , '\n' | grep -E "^${base}[0-9]+$" || true)
     if [[ -n "$names" ]]; then
-      while IFS= read -r -a existing; do
+      while IFS= read -r existing; do
         [[ -z "$existing" ]] && continue
         local idx
         idx=$(echo "$existing" | sed -E "s/^${base}([0-9]+)$/\1/")
@@ -259,76 +308,36 @@ reconcile_group() {
 }
 
 create_vm() {
-  local name="$1" vcpu="${2:-}" ram_gib="${3:-}" disk_gib="${4:-}" net_uuid="${5:-}" sr_uuid="${6:-}" kernel_args="${7:-}"
-
-  if [[ -z "$name" || -z "$vcpu" || -z "$ram_gib" || -z "$disk_gib" || -z "$net_uuid" || -z "$sr_uuid" ]]; then
-    echo "create_vm: missing parameters (name=$name vcpu=$vcpu ram_gib=$ram_gib disk_gib=$disk_gib net=$net_uuid sr=$sr_uuid)"
-    exit 1
-  fi
-  if ! [[ "$vcpu" =~ ^[0-9]+$ && "$ram_gib" =~ ^[0-9]+$ && "$disk_gib" =~ ^[0-9]+$ ]]; then
-    echo "create_vm: CPU/RAM/DISK must be integers"
-    exit 1
-  fi
+  local name="$1"
+  local vcpu="$2"
+  local ram_gib="$3"
+  local disk_gib="$4"
+  local net_uuid="$5"
+  local sr_uuid="$6"
+  local kernel_args="$7"
 
   echo "Creating VM $name"
-  local template_uuid vm_uuid
+  local template_uuid vm_uuid vdi_uuid vbduuid vif_uuid
 
-  template_uuid=$(xe template-list name-label="Other install media (64-bit)" --minimal)
-  if [[ -z "$template_uuid" ]]; then
-    template_uuid=$(xe template-list name-label="Other install media" --minimal)
-  fi
-  if [[ -z "$template_uuid" ]]; then
-    echo "No suitable base template found"
-    exit 1
-  fi
-
-  local out
-  for _ in 1 2 3; do
-    out=$(xe_try vm-clone new-name-label="$name" uuid="$template_uuid" || true)
-    vm_uuid=$(echo "$out" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
-    [[ -n "${vm_uuid:-}" ]] && break
-    sleep 1
-  done
-  if [[ -z "${vm_uuid:-}" ]]; then
-    echo "vm-clone failed for $name: $out"
-    exit 1
-  fi
-
+  template_uuid=$(xe template-list name-label="Other install media" --minimal)
+  vm_uuid=$(xe vm-clone new-name-label="$name" uuid="$template_uuid")
   xe_must vm-param-set uuid="$vm_uuid" is-a-template=false
   xe_must vm-param-set uuid="$vm_uuid" name-description="Talos Linux node"
+
   xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
+  local bytes=$((ram_gib*1024*1024*1024))
+  xe_must vm-memory-set uuid="$vm_uuid" static-min=$bytes dynamic-min=$bytes dynamic-max=$bytes static-max=$bytes
 
-  local bytes
-  bytes=$(printf '%d' $((ram_gib * 1024 * 1024 * 1024)))
-  xe_must vm-param-set uuid="$vm_uuid" memory-static-max="$bytes"
-  xe_must vm-param-set uuid="$vm_uuid" memory-dynamic-max="$bytes"
-  xe_must vm-param-set uuid="$vm_uuid" memory-dynamic-min="$bytes"
-  xe_must vm-param-set uuid="$vm_uuid" memory-static-min="$bytes"
-
-  local out_vif vif_uuid
-  out_vif=$(xe_try vif-create vm-uuid="$vm_uuid" network-uuid="$net_uuid" device=0 || true)
-  vif_uuid=$(echo "$out_vif" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
-  if [[ -z "$vif_uuid" ]]; then
-    echo "vif-create failed for $name: $out_vif"
-    exit 1
-  fi
+  # vNIC
+  vif_uuid=$(xe vif-create vm-uuid="$vm_uuid" network-uuid="$net_uuid" device=0)
   xe_must vif-param-set uuid="$vif_uuid" other-config:ethtool-gso="off"
 
-  local out_vdi vdi_uuid out_vbd vbduuid
-  out_vdi=$(xe_try vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=user virtual-size="$(printf '%d' $((disk_gib * 1024 * 1024 * 1024)))" || true)
-  vdi_uuid=$(echo "$out_vdi" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
-  if [[ -z "$vdi_uuid" ]]; then
-    echo "vdi-create failed for $name: $out_vdi"
-    exit 1
-  fi
-  out_vbd=$(xe_try vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW || true)
-  vbduuid=$(echo "$out_vbd" | awk '/^[0-9a-f-]{36}$/ {print $0; exit}')
-  if [[ -z "$vbduuid" ]]; then
-    echo "vbd-create failed for $name: $out_vbd"
-    exit 1
-  fi
+  # Диск
+  vdi_uuid=$(xe vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=User virtual-size=$((disk_gib*1024*1024*1024)))
+  vbduuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW)
   xe_must vbd-param-set uuid="$vbduuid" userdevice=0
 
+  # PV boot
   xe_must vm-param-set uuid="$vm_uuid" HVM-boot-policy=""
   xe_must vm-param-set uuid="$vm_uuid" PV-bootloader="pygrub"
   if [[ -n "$kernel_args" ]]; then
@@ -363,11 +372,10 @@ main() {
   fi
 
   import_iso_if_needed
-  # Ensure ISO SR sees the Talos ISO and future seed ISOs
-  xe sr-scan uuid="$(xe sr-list name-label="${ISO_SR_NAME}" --minimal)" >/dev/null 2>&1 || true
 
   # Reconcile Control-plane
   reconcile_group "$VM_BASE_NAME_CP" "$CP_COUNT" "$net_uuid" "$sr_uuid" "$KERNEL_ARGS" "cp" 2 4 20
+
   # Reconcile Workers
   reconcile_group "$VM_BASE_NAME_WK" "$WK_COUNT" "$net_uuid" "$sr_uuid" "$KERNEL_ARGS" "wk" 4 16 100
 
