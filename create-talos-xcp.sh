@@ -6,7 +6,7 @@ CLUSTER_NAME="talos-xcp"
 NETWORK_NAME="vnic"                         # name-label сети в XCP-ng (меняйте при необходимости)
 SR_NAME=""                                  # оставить пустым чтобы выбрать default SR
 ISO_URL="https://github.com/siderolabs/talos/releases/download/v1.11.3/metal-amd64.iso"
-ISO_LOCAL_PATH="/var/iso/talos-amd64.iso"
+ISO_LOCAL_PATH="/opt/iso/metal-amd64.iso"
 ISO_SR_NAME="ISO SR"
 VM_BASE_NAME_CP="${CLUSTER_NAME}-cp"
 VM_BASE_NAME_WK="${CLUSTER_NAME}-wk"
@@ -43,7 +43,7 @@ KERNEL_ARGS=""  # пример: "talos.platform=metal talos.config.url=http://yo
 xe_must() { xe "$@" >/dev/null; }
 
 get_default_sr() {
-  xe sr-list other-config:i18n-key=local-storage --minimal
+  xe pool-list --minimal | xargs -I{} xe pool-param-get uuid={} param-name=default-SR
 }
 
 get_pool_master() {
@@ -64,6 +64,9 @@ ensure_iso_sr() {
       pbd_uuid=$(xe pbd-create sr-uuid="$sr_uuid" host-uuid="$host_uuid" device-config:location="$ISO_DIR" device-config:legacy_mode=true)
     fi
     xe_must pbd-plug uuid="$pbd_uuid"
+    xe_must sr-scan uuid="$sr_uuid"
+  else
+    xe_must sr-scan uuid="$iso_sr"
   fi
 }
 
@@ -80,6 +83,15 @@ import_iso_if_needed() {
 find_network_uuid() {
   local name="$1"
   xe network-list name-label="$name" --minimal
+}
+
+lookup_iso_vdi_by_name() {
+  # Finds VDI uuid (ISO) by file basename inside ISO SR
+  local iso_name="$1"
+  local iso_sr_uuid
+  iso_sr_uuid=$(xe sr-list name-label="${ISO_SR_NAME}" type=iso --minimal)
+  [[ -z "$iso_sr_uuid" ]] && echo "" && return 0
+  xe vdi-list sr-uuid="$iso_sr_uuid" name-label="$iso_name" --minimal
 }
 
 create_seed_iso_from_mc() {
@@ -108,19 +120,6 @@ create_seed_iso_from_mc() {
   fi
 
   # Собираем user-data: вставляем сеть в machineconfig
-  # Пример блока сети Talos (metal):
-  #   network:
-  #     interfaces:
-  #       - interface: eth0
-  #         addresses:
-  #           - 192.168.10.2/24
-  #         routes:
-  #           - network: 0.0.0.0/0
-  #             gateway: 192.168.10.1
-  #         dhcp: false
-  #     dns:
-  #       servers:
-  #         - 1.1.1.1
   cat > "${src_dir}/user-data" <<'EOF'
 #cloud-config
 EOF
@@ -169,13 +168,23 @@ attach_iso() {
   local iso_path="$2"
   local iso_name
   iso_name=$(basename "$iso_path")
-  local cd_vbd
+  local iso_vdi cd_vbd
+  iso_vdi=$(lookup_iso_vdi_by_name "$iso_name")
+  if [[ -z "$iso_vdi" ]]; then
+    echo "ISO '$iso_name' not found in ISO SR index. Running SR scan..."
+    ensure_iso_sr
+    iso_vdi=$(lookup_iso_vdi_by_name "$iso_name")
+    if [[ -z "$iso_vdi" ]]; then
+      echo "Failed to locate ISO '$iso_name' in ISO SR"
+      exit 1
+    fi
+  fi
   cd_vbd=$(xe vbd-list vm-uuid="$vm_uuid" type=CD --minimal)
   if [[ -z "$cd_vbd" ]]; then
     cd_vbd=$(xe vbd-create vm-uuid="$vm_uuid" type=CD device=3 bootable=true mode=RO empty=true)
   fi
   xe_must vbd-param-set uuid="$cd_vbd" userdevice=3
-  xe_must vm-cd-add vm="$vm_uuid" cd-name="$iso_name" device=3
+  xe_must vbd-param-set uuid="$cd_vbd" vdi-uuid="$iso_vdi"
 }
 
 attach_second_iso() {
@@ -183,10 +192,25 @@ attach_second_iso() {
   local iso_path="$2"
   local iso_name
   iso_name=$(basename "$iso_path")
-  local cd_vbd2
+  local iso_vdi cd_vbd2
+  iso_vdi=$(lookup_iso_vdi_by_name "$iso_name")
+  if [[ -z "$iso_vdi" ]]; then
+    # Import seed ISO into ISO SR (required for vm-cd-add; easier to use VDI attach)
+    local iso_sr_uuid
+    iso_sr_uuid=$(xe sr-list name-label="${ISO_SR_NAME}" type=iso --minimal)
+    [[ -z "$iso_sr_uuid" ]] && { echo "ISO SR not found"; exit 1; }
+    # Place file and rescan SR so it appears as VDI
+    cp -f "$iso_path" "${ISO_DIR}/$iso_name"
+    xe_must sr-scan uuid="$iso_sr_uuid"
+    iso_vdi=$(lookup_iso_vdi_by_name "$iso_name")
+    if [[ -z "$iso_vdi" ]]; then
+      echo "Failed to import seed ISO '$iso_name' to ISO SR"
+      exit 1
+    fi
+  fi
   cd_vbd2=$(xe vbd-create vm-uuid="$vm_uuid" type=CD device=4 bootable=false mode=RO empty=true)
   xe_must vbd-param-set uuid="$cd_vbd2" userdevice=4
-  xe_must vm-cd-add vm="$vm_uuid" cd-name="$iso_name" device=4
+  xe_must vbd-param-set uuid="$cd_vbd2" vdi-uuid="$iso_vdi"
 }
 
 vm_exists_by_name() {
@@ -206,19 +230,20 @@ destroy_vm_by_uuid() {
   local power_state
   power_state=$(xe vm-param-get uuid="$uuid" param-name=power-state || true)
   if [[ "$power_state" == "running" ]]; then
-    xe_must vm-shutdown uuid="$uuid"
+    xe vm-shutdown uuid="$uuid" force=true >/dev/null 2>&1 || xe vm-reset-powerstate uuid="$uuid" >/dev/null 2>&1 || true
   fi
-  # Удаляем все VBD/VIF, затем саму ВМ и ее диски
-  local vbds vifs
+  # detach/destroy VBDs
+  local vbds
   vbds=$(xe vbd-list vm-uuid="$uuid" --minimal || true)
   if [[ -n "$vbds" ]]; then
     IFS=, read -r -a vbd_arr <<< "$vbds"
     for vbd in "${vbd_arr[@]}"; do
-      # попытаться отсоединить, затем уничтожить
       xe vbd-unplug uuid="$vbd" >/dev/null 2>&1 || true
       xe_must vbd-destroy uuid="$vbd"
     done
   fi
+  # destroy VIFs
+  local vifs
   vifs=$(xe vif-list vm-uuid="$uuid" --minimal || true)
   if [[ -n "$vifs" ]]; then
     IFS=, read -r -a vif_arr <<< "$vifs"
@@ -226,12 +251,7 @@ destroy_vm_by_uuid() {
       xe_must vif-destroy uuid="$vif"
     done
   fi
-
-  # Сохраним список VDI до уничтожения ВМ, чтобы убрать и диски
-  local vdis
-  vdis=$(xe vdi-list name-label | grep "$uuid-does-not-match" >/dev/null 2>&1 || true) # placeholder to keep shell safe
-
-  # Получим VDI связанные с ВМ через VBD до удаления (еще раз)
+  # collect VDIs via VBDs (before uninstall)
   local vdi_list
   vdi_list=$(xe vbd-list vm-uuid="$uuid" params=vdi-uuid --minimal 2>/dev/null || true)
 
@@ -324,6 +344,11 @@ create_vm() {
   xe_must vm-param-set uuid="$vm_uuid" is-a-template=false
   xe_must vm-param-set uuid="$vm_uuid" name-description="Talos Linux node"
 
+  xe_must vm-param-set uuid="$vm_uuid" HVM-boot-policy="" # ensure PV mode available
+  xe_must vm-param-set uuid="$vm_uuid" HVM-boot-params: order=""
+  xe_must vm-param-set uuid="$vm_uuid" platform:device-model="qemu-upstream-compat"
+  xe_must vm-param-set uuid="$vm_uuid" platform:videoram="8"
+
   xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
   local bytes=$((ram_gib*1024*1024*1024))
   xe_must vm-memory-set uuid="$vm_uuid" static-min=$bytes dynamic-min=$bytes dynamic-max=$bytes static-max=$bytes
@@ -337,8 +362,7 @@ create_vm() {
   vbduuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW)
   xe_must vbd-param-set uuid="$vbduuid" userdevice=0
 
-  # PV boot
-  xe_must vm-param-set uuid="$vm_uuid" HVM-boot-policy=""
+  # PV boot with pygrub (Talos metal ISO boots as PV kernel/initrd via pygrub)
   xe_must vm-param-set uuid="$vm_uuid" PV-bootloader="pygrub"
   if [[ -n "$kernel_args" ]]; then
     xe_must vm-param-set uuid="$vm_uuid" PV-args="$kernel_args"
