@@ -280,27 +280,41 @@ create_vm() {
   echo "Creating VM $name"
   local template_uuid vm_uuid vdi_uuid vbduuid vif_uuid
 
-  template_uuid=$(xe template-list name-label="Other install media" --minimal)
+  # Try both common template names
+  template_uuid=$(xe template-list name-label="Other install media (64-bit)" --minimal)
   if [[ -z "$template_uuid" ]]; then
-    echo "Template 'Other install media' not found"
+    template_uuid=$(xe template-list name-label="Other install media" --minimal)
+  fi
+  if [[ -z "$template_uuid" ]]; then
+    echo "No suitable base template found"
     exit 1
   fi
-  vm_uuid=$(xe vm-clone new-name-label="$name" uuid="$template_uuid")
+
+  # Clone with a simple retry
+  for _ in 1 2 3; do
+    vm_uuid=$(xe vm-clone new-name-label="$name" uuid="$template_uuid" 2>/dev/null || true)
+    [[ -n "$vm_uuid" ]] && break
+    sleep 1
+  done
   if [[ -z "$vm_uuid" ]]; then
-    echo "Failed to clone template for $name"
+    echo "Failed to clone template into VM $name"
     exit 1
   fi
+
   xe_must vm-param-set uuid="$vm_uuid" is-a-template=false
   xe_must vm-param-set uuid="$vm_uuid" name-description="Talos Linux node"
-
   xe_must vm-param-set uuid="$vm_uuid" VCPUs-max="$vcpu" VCPUs-at-startup="$vcpu"
 
-  # Use printf for 64-bit-safe arithmetic and quote values
+  # Memory: set in safe order
   local bytes
   bytes=$(printf '%d' $((ram_gib * 1024 * 1024 * 1024)))
-  xe_must vm-memory-set uuid="$vm_uuid" static-min="$bytes" dynamic-min="$bytes" dynamic-max="$bytes" static-max="$bytes"
+  xe_must vm-param-set uuid="$vm_uuid" memory-static-max="$bytes"
+  xe_must vm-param-set uuid="$vm_uuid" memory-dynamic-max="$bytes"
+  xe_must vm-param-set uuid="$vm_uuid" memory-dynamic-min="$bytes"
+  xe_must vm-param-set uuid="$vm_uuid" memory-static-min="$bytes"
 
   # vNIC
+  local vif_uuid
   vif_uuid=$(xe vif-create vm-uuid="$vm_uuid" network-uuid="$net_uuid" device=0)
   if [[ -z "$vif_uuid" ]]; then
     echo "Failed to create VIF for $name"
