@@ -40,7 +40,10 @@ ISO_DIR="/opt/iso"
 KERNEL_ARGS=""
 
 # ========= Helpers =========
-xe_must() { xe "$@" >/dev/null; }
+xe_must() {
+  echo "xe $@"
+  xe "$@" >/dev/null;
+}
 
 get_default_sr() {
   xe pool-list --minimal | xargs -I{} xe pool-param-get uuid={} param-name=default-SR
