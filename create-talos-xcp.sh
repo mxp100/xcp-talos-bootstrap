@@ -383,7 +383,6 @@ create_vm() {
   local sr_uuid="$6"
   local kernel_args="$7"
 
-  echo "Creating VM $name"
   local template_uuid vm_uuid vdi_uuid vbduuid vif_uuid
 
   template_uuid=$(xe template-list name-label="Other install media" --minimal)
