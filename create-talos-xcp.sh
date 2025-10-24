@@ -256,19 +256,20 @@ reconcile_group() {
 
 create_vm() {
   local name="$1"
-  local vcpu="$2"
-  local ram_gib="$3"
-  local disk_gib="$4"
-  local net_uuid="$5"
-  local sr_uuid="$6"
-  local kernel_args="$7"
+  local vcpu="${2:-}"
+  local ram_gib="${3:-}"
+  local disk_gib="${4:-}"
+  local net_uuid="${5:-}"
+  local sr_uuid="${6:-}"
+  local kernel_args="${7:-}"
 
-  if ! [[ "$vcpu" =~ ^[0-9]+$ && "$ram_gib" =~ ^[0-9]+$ && "$disk_gib" =~ ^[0-9]+$ ]]; then
-    echo "Invalid CPU, RAM, or disk size for $name"
+  # Validate inputs to avoid shifted/empty args causing xe errors
+  if [[ -z "$name" || -z "$vcpu" || -z "$ram_gib" || -z "$disk_gib" || -z "$net_uuid" || -z "$sr_uuid" ]]; then
+    echo "create_vm: missing parameters (name=$name vcpu=$vcpu ram_gib=$ram_gib disk_gib=$disk_gib net=$net_uuid sr=$sr_uuid)"
     exit 1
   fi
-  if [[ -z "$net_uuid" || -z "$sr_uuid" ]]; then
-    echo "Missing net or SR UUID for $name"
+  if ! [[ "$vcpu" =~ ^[0-9]+$ && "$ram_gib" =~ ^[0-9]+$ && "$disk_gib" =~ ^[0-9]+$ ]]; then
+    echo "create_vm: CPU/RAM/DISK must be integers"
     exit 1
   fi
 
@@ -292,8 +293,8 @@ create_vm() {
   vif_uuid=$(xe vif-create vm-uuid="$vm_uuid" network-uuid="$net_uuid" device=0)
   xe_must vif-param-set uuid="$vif_uuid" other-config:ethtool-gso="off"
 
-  # Диск
-  vdi_uuid=$(xe vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=User virtual-size=$((disk_gib*1024*1024*1024)))
+  # Disk (type must be lowercase 'user')
+  vdi_uuid=$(xe vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=user virtual-size=$((disk_gib*1024*1024*1024)))
   if [[ -z "$vdi_uuid" ]]; then
     echo "Failed to create VDI for $name"
     exit 1
