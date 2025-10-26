@@ -187,7 +187,7 @@ create_seed_iso_from_mc() {
   # Создаем полный machineconfig
   local config
   config=$(yq '.machine.network.hostname = "'"${vmname}"'"' "$config_file" | \
-  yq '.machine.network.interfaces[0].interface = "eth0"' | \
+  yq '.machine.network.interfaces[0].interface = "enX0"' | \
   yq '.machine.network.interfaces[0].dhcp = false' | \
   yq '.machine.network.interfaces[0].routes[0].gateway = "'"${GATEWAY}"'"' | \
   yq '.machine.network.interfaces[0].addresses[0] = "'"$ip_cidr"'"' | \
