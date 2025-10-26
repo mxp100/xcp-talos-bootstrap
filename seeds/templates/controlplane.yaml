@@ -39,13 +39,6 @@ cluster:
       service-account-jwks-uri: https://kubernetes.default.svc/openid/v1/jwks
   controllerManager: {}
   scheduler: {}
-  etcd:
-    extraArgs:
-      listen-metrics-urls: http://0.0.0.0:2381
-    advertiseClientURLs:
-      - https://0.0.0.0:2379
-    listenClientURLs:
-      - https://0.0.0.0:2379
   discovery:
     registries:
       kubernetes: {}
