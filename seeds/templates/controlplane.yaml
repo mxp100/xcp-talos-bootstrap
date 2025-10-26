@@ -4,18 +4,9 @@ machine:
   type: controlplane
   token: "REPLACE_WITH_CLUSTER_TOKEN"
   install:
-    image: ghcr.io/siderolabs/installer:v1.11.3
+    image: factory.talos.dev/metal-installer/53b20d86399013eadfd44ee49804c1fef069bfdee3b43f3f3f5a2f57c03338ac:v1.11.3
     disk: /dev/xvda
     wipe: true
-  kubelet:
-    extraArgs:
-      cloud-provider: external
-      rotate-server-certificates: "true"
-      feature-gates: RotateKubeletServerCertificate=true
-  sysctls:
-    net.ipv4.ip_forward: "1"
-    net.ipv4.conf.all.rp_filter: "0"
-    net.ipv4.conf.default.rp_filter: "0"
   time:
     servers:
       - pool.ntp.org
@@ -38,9 +29,6 @@ cluster:
       - 192.168.10.2
       - 192.168.10.3
       - 192.168.10.4
-      - "cp1.local"       # при необходимости добавьте свои имена
-      - "cp2.local"
-      - "cp3.local"
     extraArgs:
       service-account-issuer: kubernetes.default.svc
       service-account-jwks-uri: https://kubernetes.default.svc/openid/v1/jwks
