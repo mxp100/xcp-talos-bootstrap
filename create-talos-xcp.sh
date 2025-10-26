@@ -261,27 +261,26 @@ attach_second_iso() {
     echo "attach_second_iso: seed ISO not found at $iso_path"
     exit 1
   fi
-  local iso_name iso_vdi cd_vbd2 iso_sr_uuid
-  iso_name=$(basename "$iso_path")
-  iso_vdi=$(lookup_iso_vdi_by_name "$iso_name")
-  if [[ -z "$iso_vdi" ]]; then
-    iso_sr_uuid=$(xe sr-list name-label="${ISO_SR_NAME}" type=iso --minimal)
-    if [[ -z "$iso_sr_uuid" ]]; then
-      echo "ISO SR not found. Check ISO_SR_NAME='${ISO_SR_NAME}'"
-      exit 1
-    fi
-    xe_must sr-scan uuid="$iso_sr_uuid"
-    iso_vdi=$(lookup_iso_vdi_by_name "$iso_name")
-    if [[ -z "$iso_vdi" ]]; then
-      echo "Failed to import seed ISO '$iso_name' to ISO SR at ${ISO_DIR}"
-      exit 1
-    fi
+
+  # Import seed ISO as VDI
+  local vm_sr vdi_uuid vbd_uuid
+  vm_sr=$(xe vm-param-get uuid="$vm_uuid" param-name=suspend-SR-uuid 2>/dev/null || xe sr-list name-label="$SR_NAME" --minimal)
+  if [[ -z "$vm_sr" ]]; then
+    vm_sr=$(get_default_sr)
   fi
-  cd_vbd2=$(xe vbd-create vm-uuid="$vm_uuid" type=Disk device=2 bootable=false mode=RO vdi-uuid="$vdi_uuid")
-  if [[ -z "$cd_vbd2" ]]; then
-    echo "attach_second_iso: failed to create CD VBD2"
-    exit 1
-  fi
+
+  echo "Importing seed ISO as VDI (read-only disk)..."
+  vdi_uuid=$(xe vdi-import filename="$iso_path" sr-uuid="$vm_sr" format=raw)
+
+  # Set VDI to read-only
+  xe_must vdi-param-set uuid="$vdi_uuid" read-only=true
+  xe_must vdi-param-set uuid="$vdi_uuid" name-label="$(basename "$iso_path")"
+
+  # Attach as disk device (not CD)
+  vbd_uuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=2 type=Disk mode=RO bootable=false)
+  xe_must vbd-param-set uuid="$vbd_uuid" userdevice=2
+
+  echo "Attached seed ISO as read-only disk: $(basename "$iso_path")"
 }
 
 vm_exists_by_name() {
