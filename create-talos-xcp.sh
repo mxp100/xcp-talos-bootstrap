@@ -442,7 +442,7 @@ check_and_install() {
 
 generate_config() {
     mkdir "$(pwd)/config"
-    talosctl gen config "$CLUSTER_NAME" "${CP_IPS[0]}" -o "$(pwd)/config"
+    talosctl gen config "$CLUSTER_NAME" "https://${CP_IPS[0]}:6443" -o "$(pwd)/config"
 }
 
 main() {
