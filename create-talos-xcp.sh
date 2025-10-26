@@ -445,8 +445,16 @@ check_and_install() {
 }
 
 generate_config() {
-    mkdir -p "$(pwd)/config"
-    talosctl gen config "$CLUSTER_NAME" "https://${CP_IPS[0]}:6443" -o "$(pwd)/config"
+    local config_dir="$(pwd)/config"
+    mkdir -p "$config_dir"
+
+    if [[ ! -f "$config_dir/controlplane.yaml" ]] || [[ ! -f "$config_dir/worker.yaml" ]]; then
+        talosctl gen config "$CLUSTER_NAME" "<https://${CP_IPS>[0]}:6443" -o "$config_dir"
+        echo "Generated new Talos config files in $config_dir"
+    else
+        echo "Config files already exist in $config_dir, skipping generation"
+        echo "To regenerate, delete the directory or add --force flag to talosctl"
+    fi
 }
 
 main() {
