@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ========= CONFIG =========
 CLUSTER_NAME="talos-xcp"
-NETWORK_NAME="Pool-wide network associated with eth3"                         # name-label сети в XCP-ng (меняйте при необходимости)
+NETWORK_NAME="vnic"                         # name-label сети в XCP-ng (меняйте при необходимости)
 SR_NAME=""                                  # оставить пустым чтобы выбрать default SR
 ISO_URL="https://factory.talos.dev/image/53b20d86399013eadfd44ee49804c1fef069bfdee3b43f3f3f5a2f57c03338ac/v1.11.3/metal-amd64.iso"
 ISO_LOCAL_PATH="/opt/iso/metal-amd64.iso"
