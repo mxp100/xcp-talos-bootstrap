@@ -37,7 +37,7 @@ SEEDS_DIR="$(pwd)/seeds"
 ISO_DIR="/opt/iso"
 
 # Optional kernel args
-KERNEL_ARGS=""
+KERNEL_ARGS="talos.platform=metal console=tty0 console=ttyS0 talos.debug=true"
 
 # ========= Helpers =========
 xe_must() {
