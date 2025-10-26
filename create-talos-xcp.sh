@@ -178,11 +178,13 @@ create_seed_iso_from_mc() {
   mkdir -p "$src_dir"
 
   # Выбор шаблона machineconfig
-  local template_file
+  local template_file config_file
   if [[ "$role" == "cp" ]]; then
     template_file="$CP_TEMPLATE"
+    config_file="$(pwd)/config/controlplane.yaml"
   else
     template_file="$WK_TEMPLATE"
+    config_file="$(pwd)/config/worker.yaml"
   fi
 
   if [[ ! -f "$template_file" ]]; then
@@ -190,10 +192,17 @@ create_seed_iso_from_mc() {
     exit 1
   fi
 
+  if [[ ! -f "$config_file" ]]; then
+    echo "Config not found: $config_file"
+    exit 1
+  fi
+
   local ip_cidr="${ip}/${CIDR_PREFIX}"
   
   # Создаем полный machineconfig с правильной секцией network
-  cat "$template_file" > "${src_dir}/user-data"
+  yq -i '.cluster.id=load("'+"$config_file"+'").cluster.id' "$template_file" | \
+  yq -i '.cluster.secret=load("'+"$config_file"+'").cluster.secret' | \
+  yq -i '.machine.token=load("'+"$config_file"+'").machine.token' > "${src_dir}/user-data"
   
   # Добавляем секцию network (если её еще нет в шаблоне)
   cat >> "${src_dir}/user-data" <<EOF
@@ -507,7 +516,8 @@ check_and_install() {
 }
 
 generate_config() {
-    local config_dir="$(pwd)/config"
+    local config_dir
+    config_file="$(pwd)/config"
     mkdir -p "$config_dir"
 
     if [[ ! -f "$config_dir/controlplane.yaml" ]] || [[ ! -f "$config_dir/worker.yaml" ]]; then
