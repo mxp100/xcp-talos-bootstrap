@@ -200,9 +200,9 @@ create_seed_iso_from_mc() {
   local ip_cidr="${ip}/${CIDR_PREFIX}"
   
   # Создаем полный machineconfig с правильной секцией network
-  yq -i '.cluster.id=load("'"$config_file"'").cluster.id' "$template_file" > "${src_dir}/user-data"
-  yq -i '.cluster.secret=load("'"$config_file"'").cluster.secret' "${src_dir}/user-data" > "${src_dir}/user-data"
-  yq -i '.machine.token=load("'"$config_file"'").machine.token' "${src_dir}/user-data" > "${src_dir}/user-data"
+  yq -i '.cluster.id=load("'"$config_file"'").cluster.id' | \
+  yq -i '.cluster.secret=load("'"$config_file"'").cluster.secret' | \
+  yq -i '.machine.token=load("'"$config_file"'").machine.token' "$template_file" > "${src_dir}/user-data"
   
   # Добавляем секцию network (если её еще нет в шаблоне)
   cat >> "${src_dir}/user-data" <<EOF
