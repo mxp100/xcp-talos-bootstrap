@@ -262,25 +262,34 @@ attach_second_iso() {
     exit 1
   fi
 
-  # Import seed ISO as VDI
-  local vm_sr vdi_uuid vbd_uuid
+  # Get VM's SR
+  local vm_sr vdi_uuid vbd_uuid iso_name
   vm_sr=$(xe vm-param-get uuid="$vm_uuid" param-name=suspend-SR-uuid 2>/dev/null || xe sr-list name-label="$ISO_SR_NAME" --minimal)
   if [[ -z "$vm_sr" ]]; then
     vm_sr=$(get_default_sr)
   fi
 
-  echo "Importing seed ISO as VDI (read-only disk)..."
-  vdi_uuid=$(xe vdi-import filename="$iso_path" sr-uuid="$vm_sr" format=raw)
+  iso_name=$(basename "$iso_path")
 
-  # Set VDI to read-only
+  # Create VDI and import ISO content
+  echo "Creating VDI for seed ISO (read-only disk)..."
+  local iso_size
+  iso_size=$(stat -f "%z" "$iso_path" 2>/dev/null || stat -c "%s" "$iso_path")
+
+  vdi_uuid=$(xe vdi-create sr-uuid="$vm_sr" name-label="$iso_name" type=user virtual-size="$iso_size" read-only=false)
+
+  # Import ISO data into VDI
+  echo "Importing seed ISO data into VDI..."
+  xe vdi-import uuid="$vdi_uuid" filename="$iso_path" format=raw
+
+  # Set VDI to read-only after import
   xe_must vdi-param-set uuid="$vdi_uuid" read-only=true
-  xe_must vdi-param-set uuid="$vdi_uuid" name-label="$(basename "$iso_path")"
 
   # Attach as disk device (not CD)
   vbd_uuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=2 type=Disk mode=RO bootable=false)
   xe_must vbd-param-set uuid="$vbd_uuid" userdevice=2
 
-  echo "Attached seed ISO as read-only disk: $(basename "$iso_path")"
+  echo "Attached seed ISO as read-only disk: $iso_name"
 }
 
 vm_exists_by_name() {
