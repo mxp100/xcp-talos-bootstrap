@@ -4,7 +4,7 @@ machine:
   type: worker
   token: "REPLACE_WITH_CLUSTER_TOKEN"
   install:
-    image: factory.talos.dev/nocloud-installer/af0f260ca05688ef5c94894566b3b3c73a35ad272f64a8c3e5b0e48e0a0cac6a:v1.11.3
+    image: factory.talos.dev/metal-installer/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae:v1.11.3
     disk: /dev/xvda
     wipe: true
   time:

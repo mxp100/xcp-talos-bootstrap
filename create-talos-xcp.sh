@@ -5,7 +5,7 @@ set -euo pipefail
 CLUSTER_NAME="talos-xcp"
 NETWORK_NAME="vnic"                         # name-label сети в XCP-ng (меняйте при необходимости)
 SR_NAME=""                                  # оставить пустым чтобы выбрать default SR
-ISO_URL="https://factory.talos.dev/image/af0f260ca05688ef5c94894566b3b3c73a35ad272f64a8c3e5b0e48e0a0cac6a/v1.11.3/nocloud-amd64.iso"
+ISO_URL="https://factory.talos.dev/image/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae/v1.11.3/metal-amd64.iso"
 ISO_LOCAL_PATH="/opt/iso/talos-amd64.iso"
 ISO_SR_NAME="ISO SR"
 CURL_BINARY=""
@@ -203,16 +203,10 @@ create_seed_iso_from_mc() {
   yq '.machine.network.hostname = "'"${vmname}"'"' | \
   yq '.machine.network.interfaces[0].routes[0].gateway = "'"${GATEWAY}"'"' | \
   yq '.machine.network.nameservers[0] = "'"${DNS_SERVER}"'"' | \
-  yq '.machine.network.interfaces[0].addresses[0] = "'"$ip_cidr"'"' > "${src_dir}/user-data"
-
-  # meta-data
-  cat > "${src_dir}/meta-data" <<EOF
-instance-id: ${vmname}
-local-hostname: ${vmname}
-EOF
+  yq '.machine.network.interfaces[0].addresses[0] = "'"$ip_cidr"'"' > "${src_dir}/config.yaml"
 
   # Сборка ISO
-  genisoimage -quiet -volid cidata -joliet -rock -o "$out_iso" -graft-points "user-data=${src_dir}/user-data" "meta-data=${src_dir}/meta-data"
+  genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
 
   echo "$out_iso"
 }
