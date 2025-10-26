@@ -6,6 +6,7 @@ CLUSTER_NAME="talos-xcp"
 NETWORK_NAME="vnic"                         # name-label сети в XCP-ng (меняйте при необходимости)
 SR_NAME=""                                  # оставить пустым чтобы выбрать default SR
 ISO_URL="https://factory.talos.dev/image/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae/v1.11.3/metal-amd64.iso"
+ISO_INSTALLER_URL="factory.talos.dev/metal-installer/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae:v1.11.3"
 ISO_LOCAL_PATH="/opt/iso/metal-amd64.iso"
 ISO_SR_NAME="ISO SR"
 CURL_BINARY=""
@@ -20,17 +21,11 @@ RECONCILE=true   # если true — добавляем недостающие �
 # IP-параметры
 GATEWAY="192.168.10.1"
 CIDR_PREFIX="24"
-DNS_SERVER="1.1.1.1"
+DNS_SERVER=("8.8.8.8" "1.1.1.1")
 
 # Диапазоны IP
 CP_IPS=("192.168.10.2" "192.168.10.3" "192.168.10.4")
 WK_IPS=("192.168.10.10" "192.168.10.11" "192.168.10.12")
-
-# Пути к machineconfig-шаблонам (должны существовать до запуска)
-# Содержимое — стандартные talos machineconfig для controlplane/worker, без секции network (ниже вставим сеть).
-TEMPLATE_DIR="$(pwd)/seeds/templates"
-CP_TEMPLATE="${TEMPLATE_DIR}/controlplane.yaml"
-WK_TEMPLATE="${TEMPLATE_DIR}/worker.yaml"
 
 # Папка для генерации индивидуальных сидов
 SEEDS_DIR="$(pwd)/seeds"
@@ -175,18 +170,11 @@ create_seed_iso_from_mc() {
   mkdir -p "$src_dir"
 
   # Выбор шаблона machineconfig
-  local template_file config_file
+  local config_file
   if [[ "$role" == "cp" ]]; then
-    template_file="$CP_TEMPLATE"
     config_file="$(pwd)/config/controlplane.yaml"
   else
-    template_file="$WK_TEMPLATE"
     config_file="$(pwd)/config/worker.yaml"
-  fi
-
-  if [[ ! -f "$template_file" ]]; then
-    echo "Template not found: $template_file"
-    exit 1
   fi
 
   if [[ ! -f "$config_file" ]]; then
@@ -196,14 +184,29 @@ create_seed_iso_from_mc() {
 
   local ip_cidr="${ip}/${CIDR_PREFIX}"
   
-  # Создаем полный machineconfig с правильной секцией network
-  yq '.cluster.id=load("'"$config_file"'").cluster.id' "$template_file" | \
-  yq '.cluster.secret=load("'"$config_file"'").cluster.secret' | \
-  yq '.machine.token=load("'"$config_file"'").machine.token' | \
-  yq '.machine.network.hostname = "'"${vmname}"'"' | \
+  # Создаем полный machineconfig
+  local config
+  config=$(yq '.machine.network.hostname = "'"${vmname}"'"' "$config_file" | \
   yq '.machine.network.interfaces[0].routes[0].gateway = "'"${GATEWAY}"'"' | \
-  yq '.machine.network.nameservers[0] = "'"${DNS_SERVER}"'"' | \
-  yq '.machine.network.interfaces[0].addresses[0] = "'"$ip_cidr"'"' > "${src_dir}/config.yaml"
+  yq '.machine.network.interfaces[0].addresses[0] = "'"$ip_cidr"'"' | \
+  yq '.machine.time.servers[0] = "pool.ntp.org"' | \
+  yq '.machine.install.image = "'"${ISO_INSTALLER_URL}"'"' | \
+  yq '.machine.install.wipe = true' | \
+  yq '.machine.install.disk = "/dev/xvda"')
+
+  for i in "${!DNS_SERVER[@]}"; do
+    echo "$config" | \
+    config=$(yq '.machine.network.nameservers['"$i"'] = "'"${DNS_SERVER[i]}"'"')
+  done
+
+  if [[ "$role" == "cp" ]]; then
+    for i in "${!CP_IPS[@]}"; do
+      echo "$config" | \
+      config=$(yq '.cluster.apiServer.certSANs['"$i"'] = "'"${CP_IPS[i]}"'"')
+    done
+  fi
+
+  echo "$config" > "${src_dir}/config.yaml"
 
   # Сборка ISO
   genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
