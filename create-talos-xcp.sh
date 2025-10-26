@@ -440,12 +440,16 @@ check_and_install() {
   fi
 }
 
+generate_config() {
+    mkdir "$(pwd)/config"
+    talosctl gen config "$CLUSTER_NAME" "${CP_IPS[0]}" -o "$(pwd)/config"
+}
+
 main() {
   echo "Preparing..."
-  check_and_install
 
-  mkdir "$(pwd)/config"
-  talosctl gen config "$CLUSTER_NAME" "${CP_IPS[0]}" -o "$(pwd)/config"
+  check_and_install
+  generate_config
 
   local net_uuid sr_uuid default_sr
   net_uuid=$(find_network_uuid "$NETWORK_NAME")
