@@ -434,9 +434,13 @@ check_and_install() {
     curl -sL https://talos.dev/install | sh
   fi
 
-  # Check and install genisoimage if needed
   if ! command -v genisoimage >/dev/null 2>&1; then
     yum install -y genisoimage >/dev/null
+  fi
+
+  if ! command -v yq >/dev/null 2>&1; then
+    wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+    chmod +x /usr/local/bin/yq
   fi
 }
 
