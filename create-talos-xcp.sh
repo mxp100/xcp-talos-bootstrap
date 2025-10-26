@@ -37,7 +37,7 @@ SEEDS_DIR="$(pwd)/seeds"
 ISO_DIR="/opt/iso"
 
 # Optional kernel args
-KERNEL_ARGS="talos.config=metal-iso"
+KERNEL_ARGS="talos.platform=nocloud"
 
 # ========= Helpers =========
 xe_must() {
@@ -206,10 +206,16 @@ create_seed_iso_from_mc() {
   yq '.machine.network.hostname = "'"${vmname}"'"' | \
   yq '.machine.network.interfaces[0].routes[0].gateway = "'"${GATEWAY}"'"' | \
   yq '.machine.network.nameservers[0] = "'"${DNS_SERVER}"'"' | \
-  yq '.machine.network.interfaces[0].addresses[0] = "'"$ip_cidr"'"' > "${src_dir}/config.yaml"
+  yq '.machine.network.interfaces[0].addresses[0] = "'"$ip_cidr"'"' > "${src_dir}/user-data"
+
+  # meta-data
+  cat > "${src_dir}/meta-data" <<EOF
+instance-id: ${vmname}
+local-hostname: ${vmname}
+EOF
 
   # Сборка ISO
-  genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
+  genisoimage -quiet -volid cidata -joliet -rock -o "$out_iso" -graft-points "user-data=${src_dir}/user-data" "meta-data=${src_dir}/meta-data"
 
   echo "$out_iso"
 }
