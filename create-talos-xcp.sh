@@ -517,7 +517,7 @@ check_and_install() {
 
 generate_config() {
     local config_dir
-    config_file="$(pwd)/config"
+    config_dir="$(pwd)/config"
     mkdir -p "$config_dir"
 
     if [[ ! -f "$config_dir/controlplane.yaml" ]] || [[ ! -f "$config_dir/worker.yaml" ]]; then
