@@ -5,8 +5,8 @@ set -euo pipefail
 CLUSTER_NAME="talos-xcp"
 NETWORK_NAME="vnic"                         # name-label сети в XCP-ng (меняйте при необходимости)
 SR_NAME=""                                  # оставить пустым чтобы выбрать default SR
-ISO_URL="https://factory.talos.dev/image/53b20d86399013eadfd44ee49804c1fef069bfdee3b43f3f3f5a2f57c03338ac/v1.11.3/metal-amd64.iso"
-ISO_LOCAL_PATH="/opt/iso/metal-amd64.iso"
+ISO_URL="https://factory.talos.dev/image/af0f260ca05688ef5c94894566b3b3c73a35ad272f64a8c3e5b0e48e0a0cac6a/v1.11.3/nocloud-amd64.raw.xz"
+ISO_LOCAL_PATH="/opt/iso/talos-amd64.iso"
 ISO_SR_NAME="ISO SR"
 CURL_BINARY=""
 STATIC_CURL_PATH="/usr/local/bin/curl-static"
@@ -35,9 +35,6 @@ WK_TEMPLATE="${TEMPLATE_DIR}/worker.yaml"
 # Папка для генерации индивидуальных сидов
 SEEDS_DIR="$(pwd)/seeds"
 ISO_DIR="/opt/iso"
-
-# Optional kernel args
-KERNEL_ARGS="talos.platform=nocloud"
 
 # ========= Helpers =========
 xe_must() {
@@ -379,11 +376,10 @@ reconcile_group() {
   local desired="$2"
   local net_uuid="$3"
   local sr_uuid="$4"
-  local kargs="$5"
-  local role="$6"
-  local vcpu="$7"
-  local ram="$8"
-  local disk="$9"
+  local role="$5"
+  local vcpu="$6"
+  local ram="$7"
+  local disk="$8"
 
   # Создадим недостающие 1..desired
   for i in $(seq 1 "$desired"); do
@@ -406,7 +402,7 @@ reconcile_group() {
     fi
 
     local vm_uuid
-    vm_uuid=$(create_vm "$name" "$vcpu" "$ram" "$disk" "$net_uuid" "$sr_uuid" "$kargs")
+    vm_uuid=$(create_vm "$name" "$vcpu" "$ram" "$disk" "$net_uuid" "$sr_uuid")
     echo "VM UUID: $vm_uuid"
     attach_iso "$vm_uuid" "$ISO_LOCAL_PATH"
     echo "Disk source attached"
@@ -604,10 +600,10 @@ main() {
   import_iso_if_needed
 
   # Reconcile Control-plane
-  reconcile_group "$VM_BASE_NAME_CP" "$CP_COUNT" "$net_uuid" "$sr_uuid" "$KERNEL_ARGS" "cp" 2 4 20
+  reconcile_group "$VM_BASE_NAME_CP" "$CP_COUNT" "$net_uuid" "$sr_uuid" "cp" 2 4 20
 
   # Reconcile Workers
-  reconcile_group "$VM_BASE_NAME_WK" "$WK_COUNT" "$net_uuid" "$sr_uuid" "$KERNEL_ARGS" "wk" 4 16 100
+  reconcile_group "$VM_BASE_NAME_WK" "$WK_COUNT" "$net_uuid" "$sr_uuid" "wk" 4 16 100
 
   echo "Done. Start/stop as needed, e.g.: xe vm-start name-label=${VM_BASE_NAME_CP}1"
 }
