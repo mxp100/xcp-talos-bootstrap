@@ -445,12 +445,36 @@ check_and_install() {
 }
 
 generate_config() {
-    mkdir "$(pwd)/config"
+    mkdir -p "$(pwd)/config"
     talosctl gen config "$CLUSTER_NAME" "https://${CP_IPS[0]}:6443" -o "$(pwd)/config"
 }
 
 main() {
   echo "Preparing..."
+
+  while getopts ":n:h" opt; do
+    case ${opt} in
+      n )
+        NETWORK_NAME="$OPTARG"
+        ;;
+      h )
+        echo "Usage: $0 [-n NETWORK_NAME]"
+        echo "  -n NETWORK_NAME  : Name of the XCP-ng network to use (default: vnic)"
+        echo "  -h               : Display this help message"
+        exit 0
+        ;;
+      \? )
+        echo "Invalid option: -$OPTARG" >&2
+        echo "Usage: $0 [-n NETWORK_NAME]"
+        exit 1
+        ;;
+      : )
+        echo "Option -$OPTARG requires an argument" >&2
+        exit 1
+        ;;
+    esac
+  done
+  shift $((OPTIND -1))
 
   check_and_install
   generate_config
