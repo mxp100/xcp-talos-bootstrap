@@ -509,8 +509,7 @@ generate_config() {
 }
 
 clean_seeds() {
-  echo "$(pwd)/seeds/${CLUSTER_NAME}*"
-  rm -f "$(pwd)/seeds/${CLUSTER_NAME}*"
+  rm -rf "$(pwd)/seeds/${CLUSTER_NAME}*"
   rm -f "${ISO_DIR}/${CLUSTER_NAME}*"
 }
 
@@ -543,6 +542,7 @@ main() {
 
   check_and_install
   clean_seeds
+  exit
   generate_config
 
   local net_uuid sr_uuid default_sr
