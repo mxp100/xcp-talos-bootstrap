@@ -308,9 +308,6 @@ attach_second_iso() {
   echo "Importing seed ISO data into VDI..."
   xe vdi-import uuid="$vdi_uuid" filename="$iso_path" format=raw
 
-  # Set VDI to read-only after import
-  xe_must vdi-param-set uuid="$vdi_uuid" read-only=true
-
   # Attach as disk device (not CD)
   vbd_uuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=2 type=Disk mode=RO bootable=false)
   xe_must vbd-param-set uuid="$vbd_uuid" userdevice=2
