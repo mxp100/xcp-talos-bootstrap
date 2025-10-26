@@ -168,11 +168,6 @@ instance-id: ${vmname}
 local-hostname: ${vmname}
 EOF
 
-  # Check and install genisoimage if needed
-  if ! command -v genisoimage >/dev/null 2>&1; then
-    yum install -y genisoimage >/dev/null
-  fi
-
   # Сборка ISO
   genisoimage -quiet -volid cidata -joliet -rock -o "$out_iso" -graft-points "user-data=${src_dir}/user-data" "meta-data=${src_dir}/meta-data"
 
@@ -434,8 +429,24 @@ create_vm() {
   echo "$vm_uuid"
 }
 
+check_and_install() {
+  if ! command -v talosctl >/dev/null 2>&1; then
+    curl -sL https://talos.dev/install | sh
+  fi
+
+  # Check and install genisoimage if needed
+  if ! command -v genisoimage >/dev/null 2>&1; then
+    yum install -y genisoimage >/dev/null
+  fi
+}
+
 main() {
   echo "Preparing..."
+  check_and_install
+
+  mkdir "$(pwd)/config"
+  talosctl gen config "$CLUSTER_NAME" "${CP_IPS[0]}" -o "$(pwd)/config"
+
   local net_uuid sr_uuid default_sr
   net_uuid=$(find_network_uuid "$NETWORK_NAME")
   if [[ -z "$net_uuid" ]]; then
