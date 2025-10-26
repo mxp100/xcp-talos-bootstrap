@@ -5,8 +5,8 @@ set -euo pipefail
 CLUSTER_NAME="talos-xcp"
 NETWORK_NAME="vnic"                         # name-label сети в XCP-ng (меняйте при необходимости)
 SR_NAME=""                                  # оставить пустым чтобы выбрать default SR
-ISO_URL="https://factory.talos.dev/image/53b20d86399013eadfd44ee49804c1fef069bfdee3b43f3f3f5a2f57c03338ac/v1.11.3/nocloud-amd64.iso"
-ISO_LOCAL_PATH="/opt/iso/talos-amd64.iso"
+ISO_URL="https://factory.talos.dev/image/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae/v1.11.3/metal-amd64.iso"
+ISO_LOCAL_PATH="/opt/iso/metal-amd64.iso"
 ISO_SR_NAME="ISO SR"
 CURL_BINARY=""
 STATIC_CURL_PATH="/usr/local/bin/curl-static"
@@ -37,7 +37,7 @@ SEEDS_DIR="$(pwd)/seeds"
 ISO_DIR="/opt/iso"
 
 # Optional kernel args
-KERNEL_ARGS=""
+KERNEL_ARGS="talos.platform=metal console=tty0 console=ttyS0 talos.debug=true"
 
 # ========= Helpers =========
 xe_must() {
@@ -215,7 +215,7 @@ local-hostname: ${vmname}
 EOF
 
   # Сборка ISO
-  genisoimage -quiet -volid cidata -joliet -rock -o "$out_iso" -graft-points "user-data=${src_dir}/user-data" "meta-data=${src_dir}/meta-data"
+  genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "user-data=${src_dir}/user-data" "meta-data=${src_dir}/meta-data"
 
   echo "$out_iso"
 }
