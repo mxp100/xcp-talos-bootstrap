@@ -541,6 +541,8 @@ main() {
 
   check_and_install
   clean_seeds
+  exit
+
   generate_config
 
   local net_uuid sr_uuid default_sr
