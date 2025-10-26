@@ -277,13 +277,11 @@ attach_second_iso() {
       exit 1
     fi
   fi
-  cd_vbd2=$(xe vbd-create vm-uuid="$vm_uuid" type=CD device=4 bootable=false mode=RO empty=true)
+  cd_vbd2=$(xe vbd-create vm-uuid="$vm_uuid" type=Disk device=2 bootable=false mode=RO vdi-uuid="$vdi_uuid")
   if [[ -z "$cd_vbd2" ]]; then
     echo "attach_second_iso: failed to create CD VBD2"
     exit 1
   fi
-  xe_must vbd-param-set uuid="$cd_vbd2" userdevice=4
-  xe_must vbd-insert uuid="$cd_vbd2" vdi-uuid="$iso_vdi"
 }
 
 vm_exists_by_name() {
