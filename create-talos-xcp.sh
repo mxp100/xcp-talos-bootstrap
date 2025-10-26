@@ -293,7 +293,14 @@ attach_second_iso() {
   # Create VDI and import ISO content
   echo "Creating VDI for seed ISO (read-only disk)..."
   local iso_size
-  iso_size=$(stat -f "%z" "$iso_path" 2>/dev/null || stat -c "%s" "$iso_path")
+  iso_size=$(stat -c %s "$iso_path" 2>/dev/null || stat -f %z "$iso_path" 2>/dev/null)
+
+  if [[ -z "$iso_size" ]] || [[ ! "$iso_size" =~ ^[0-9]+$ ]]; then
+    echo "Error: Cannot determine seed ISO size"
+    exit 1
+  fi
+
+  echo "Seed ISO size: $iso_size bytes"
 
   vdi_uuid=$(xe vdi-create sr-uuid="$vm_sr" name-label="$iso_name" type=user virtual-size="$iso_size" read-only=false)
 
