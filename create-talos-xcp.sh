@@ -262,14 +262,33 @@ attach_second_iso() {
     exit 1
   fi
 
-  # Get VM's SR
+  # Get SR from VM's existing disk
   local vm_sr vdi_uuid vbd_uuid iso_name
-  vm_sr=$(xe vm-param-get uuid="$vm_uuid" param-name=suspend-SR-uuid 2>/dev/null || xe sr-list name-label="$SR_NAME" --minimal)
+  local existing_vbd existing_vdi
+  existing_vbd=$(xe vbd-list vm-uuid="$vm_uuid" type=Disk --minimal | cut -d',' -f1)
+  if [[ -n "$existing_vbd" ]]; then
+    existing_vdi=$(xe vbd-param-get uuid="$existing_vbd" param-name=vdi-uuid 2>/dev/null || true)
+    if [[ -n "$existing_vdi" ]]; then
+      vm_sr=$(xe vdi-param-get uuid="$existing_vdi" param-name=sr-uuid 2>/dev/null || true)
+    fi
+  fi
+
+  # Fallback to default SR
   if [[ -z "$vm_sr" ]]; then
-    vm_sr=$(get_default_sr)
+    if [[ -n "$SR_NAME" ]]; then
+      vm_sr=$(xe sr-list name-label="$SR_NAME" --minimal)
+    else
+      vm_sr=$(get_default_sr)
+    fi
+  fi
+
+  if [[ -z "$vm_sr" ]]; then
+    echo "Error: Cannot determine SR for VM"
+    exit 1
   fi
 
   iso_name=$(basename "$iso_path")
+  echo "Using SR: $vm_sr"
 
   # Create VDI and import ISO content
   echo "Creating VDI for seed ISO (read-only disk)..."
