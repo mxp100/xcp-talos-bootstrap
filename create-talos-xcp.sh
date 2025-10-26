@@ -509,6 +509,7 @@ generate_config() {
 }
 
 clean_seeds() {
+  echo "$(pwd)/seeds/${CLUSTER_NAME}*"
   rm -f "$(pwd)/seeds/${CLUSTER_NAME}*"
   rm -f "${ISO_DIR}/${CLUSTER_NAME}*"
 }
