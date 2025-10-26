@@ -209,7 +209,7 @@ create_seed_iso_from_mc() {
   yq '.machine.network.interfaces[0].addresses[0] = "'"$ip_cidr"'"' > "${src_dir}/config.yaml"
 
   # Сборка ISO
-  genisoimage -joliet -rock -volid 'metal-iso' -output "$out_iso" "${src_dir}/"
+  genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
 
   echo "$out_iso"
 }
