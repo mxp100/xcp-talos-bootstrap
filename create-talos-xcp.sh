@@ -264,7 +264,7 @@ attach_second_iso() {
 
   # Get VM's SR
   local vm_sr vdi_uuid vbd_uuid iso_name
-  vm_sr=$(xe vm-param-get uuid="$vm_uuid" param-name=suspend-SR-uuid 2>/dev/null || xe sr-list name-label="$ISO_SR_NAME" --minimal)
+  vm_sr=$(xe vm-param-get uuid="$vm_uuid" param-name=suspend-SR-uuid 2>/dev/null || xe sr-list name-label="$SR_NAME" --minimal)
   if [[ -z "$vm_sr" ]]; then
     vm_sr=$(get_default_sr)
   fi
