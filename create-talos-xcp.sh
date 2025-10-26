@@ -202,26 +202,11 @@ create_seed_iso_from_mc() {
   # Создаем полный machineconfig с правильной секцией network
   yq '.cluster.id=load("'"$config_file"'").cluster.id' "$template_file" | \
   yq '.cluster.secret=load("'"$config_file"'").cluster.secret' | \
-  yq '.machine.token=load("'"$config_file"'").machine.token' > "${src_dir}/user-data"
-  
-  # Добавляем секцию network (если её еще нет в шаблоне)
-  cat >> "${src_dir}/user-data" <<EOF
-machine:
-  network:
-    hostname: ${vmname}
-    interfaces:
-      - interface: eth0
-        dhcp: false
-        addresses:
-          - ${ip_cidr}
-        routes:
-          - network: 0.0.0.0/0
-            gateway: ${GATEWAY}
-    nameservers:
-      - ${DNS_SERVER}
-cluster:
-  network: {}
-EOF
+  yq '.machine.token=load("'"$config_file"'").machine.token' | \
+  yq '.machine.network.hostname = "'"${vmname}"'"' | \
+  yq '.machine.network.interfaces[0].routes[0].gateway = "'"${GATEWAY}"'"' | \
+  yq '.machine.network.nameservers[0] = "'"${DNS_SERVER}"'"' | \
+  yq '.machine.network.interfaces[0].addresses[0] = "'"$ip_cidr"'"' > "${src_dir}/user-data"
 
   # meta-data
   cat > "${src_dir}/meta-data" <<EOF

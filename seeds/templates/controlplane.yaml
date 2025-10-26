@@ -10,7 +10,12 @@ machine:
   time:
     servers:
       - pool.ntp.org
-  # network: будет добавлен скриптом
+  network:
+    hostname:
+    interfaces:
+      - interface: eth0
+        dhcp: false
+
 cluster:
   id: "REPLACE_WITH_CLUSTER_ID"        # talosctl gen config создаёт автоматически; можно оставить свой UUID
   secret: "REPLACE_WITH_CLUSTER_SECRET"
