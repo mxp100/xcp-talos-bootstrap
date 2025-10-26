@@ -521,7 +521,7 @@ generate_config() {
     mkdir -p "$config_dir"
 
     if [[ ! -f "$config_dir/controlplane.yaml" ]] || [[ ! -f "$config_dir/worker.yaml" ]]; then
-        talosctl gen config "$CLUSTER_NAME" "<https://${CP_IPS>[0]}:6443" -o "$config_dir"
+        talosctl gen config "$CLUSTER_NAME" "<https://${CP_IPS[0]}:6443" -o "$config_dir"
         echo "Generated new Talos config files in $config_dir"
     else
         echo "Config files already exist in $config_dir, skipping generation"
