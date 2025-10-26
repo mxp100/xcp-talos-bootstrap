@@ -529,6 +529,10 @@ generate_config() {
     fi
 }
 
+clean_seeds() {
+  rm -rf "$(pwd)/seeds/${CLUSTER_NAME}-*"
+}
+
 main() {
   echo "Preparing..."
 
@@ -557,6 +561,7 @@ main() {
   shift $((OPTIND -1))
 
   check_and_install
+  clean_seeds
   generate_config
 
   local net_uuid sr_uuid default_sr
