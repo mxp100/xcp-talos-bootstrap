@@ -5,7 +5,7 @@ set -euo pipefail
 CLUSTER_NAME="talos-xcp"
 NETWORK_NAME="vnic"                         # name-label сети в XCP-ng (меняйте при необходимости)
 SR_NAME=""                                  # оставить пустым чтобы выбрать default SR
-ISO_URL="https://factory.talos.dev/image/af0f260ca05688ef5c94894566b3b3c73a35ad272f64a8c3e5b0e48e0a0cac6a/v1.11.3/nocloud-amd64.raw.xz"
+ISO_URL="https://factory.talos.dev/image/af0f260ca05688ef5c94894566b3b3c73a35ad272f64a8c3e5b0e48e0a0cac6a/v1.11.3/nocloud-amd64.iso"
 ISO_LOCAL_PATH="/opt/iso/talos-amd64.iso"
 ISO_SR_NAME="ISO SR"
 CURL_BINARY=""
