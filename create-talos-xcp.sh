@@ -3,31 +3,33 @@ set -euo pipefail
 
 # ========= CONFIG =========
 CLUSTER_NAME="talos-xcp"
-NETWORK_NAME="vnic"                         # name-label сети в XCP-ng (меняйте при необходимости)
-SR_NAME=""                                  # оставить пустым чтобы выбрать default SR
+NETWORK_NAME="vnic"                         # network for adding to VM
+SR_NAME=""                                  # empty for default SR
+
+# Images need with support xen-guest-agent and kernel arguments "talos.config=metal-iso"
 ISO_URL="https://factory.talos.dev/image/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae/v1.11.3/metal-amd64.iso"
 ISO_INSTALLER_URL="factory.talos.dev/metal-installer/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae:v1.11.3"
 ISO_LOCAL_PATH="/opt/iso/metal-amd64.iso"
 ISO_SR_NAME="ISO SR"
+
 CURL_BINARY=""
 STATIC_CURL_PATH="/usr/local/bin/curl-static"
 STATIC_CURL_URL="https://github.com/moparisthebest/static-curl/releases/latest/download/curl-amd64"
 VM_BASE_NAME_CP="${CLUSTER_NAME}-cp"
 VM_BASE_NAME_WK="${CLUSTER_NAME}-wk"
-CP_COUNT=3
-WK_COUNT=3
-RECONCILE=true   # если true — добавляем недостающие и удаляем лишние ВМ для соответствия CP_COUNT/WK_COUNT
 
-# IP-параметры
+RECONCILE=true   # если true — добавляем недостающие и удаляем лишние ВМ для соответствия
+
+# IP parameters
 GATEWAY="192.168.10.1"
 CIDR_PREFIX="24"
 DNS_SERVER=("8.8.8.8" "1.1.1.1")
 
-# Диапазоны IP
+# IP ranges (corresponds to number of machines)
 CP_IPS=("192.168.10.2" "192.168.10.3" "192.168.10.4")
 WK_IPS=("192.168.10.10" "192.168.10.11" "192.168.10.12")
 
-# Папка для генерации индивидуальных сидов
+# Folders for generate seed configs and iso files
 SEEDS_DIR="$(pwd)/seeds"
 ISO_DIR="/opt/iso"
 
@@ -599,10 +601,10 @@ main() {
   import_iso_if_needed
 
   # Reconcile Control-plane
-  reconcile_group "$VM_BASE_NAME_CP" "$CP_COUNT" "$net_uuid" "$sr_uuid" "cp" 2 4 20
+  reconcile_group "$VM_BASE_NAME_CP" "${#CP_IPS[@]}" "$net_uuid" "$sr_uuid" "cp" 2 4 20
 
   # Reconcile Workers
-  reconcile_group "$VM_BASE_NAME_WK" "$WK_COUNT" "$net_uuid" "$sr_uuid" "wk" 4 16 100
+  reconcile_group "$VM_BASE_NAME_WK" "${#WK_IPS[@]}" "$net_uuid" "$sr_uuid" "wk" 4 16 100
 
   echo "Done. Start/stop as needed, e.g.: xe vm-start name-label=${VM_BASE_NAME_CP}1"
 }
