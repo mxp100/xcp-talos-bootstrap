@@ -5,6 +5,8 @@ set -euo pipefail
 CLUSTER_NAME="talos-xcp"
 NETWORK_NAME="vnic"                         # network for adding to VM
 SR_NAME=""                                  # empty for default SR
+CP_COUNT=3
+WK_COUNT=3
 
 # Images need with support xen-guest-agent and kernel arguments "talos.config=metal-iso"
 ISO_URL="https://factory.talos.dev/image/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae/v1.11.3/metal-amd64.iso"
@@ -189,7 +191,9 @@ create_seed_iso_from_mc() {
   
   # Создаем полный machineconfig
   local config
-  config=$(yq '.machine.network.hostname = "'"${vmname}"'"' "$config_file" | \
+  config=$(yq eval '... comments=""' "$config_file" | \
+  yq '.cluster.network.cni = "none"' | \
+  yq '.machine.network.hostname = "'"${vmname}"'"' | \
   yq '.machine.network.interfaces[0].interface = "enX0"' | \
   yq '.machine.network.interfaces[0].dhcp = false' | \
   yq '.machine.network.interfaces[0].routes[0].gateway = "'"${GATEWAY}"'"' | \
@@ -199,26 +203,24 @@ create_seed_iso_from_mc() {
   yq '.machine.install.wipe = true' | \
   yq '.machine.install.disk = "/dev/xvda"')
 
-  for i in "${!DNS_SERVER[@]}"; do
-    echo "$config" | \
-    config=$(yq '.machine.network.nameservers['"$i"'] = "'"${DNS_SERVER[i]}"'"')
+  for dns in "${DNS_SERVER[@]}"; do
+    config=$(echo "$config" | yq eval '.machine.network.nameservers += ["'"$dns"'"]')
   done
 
   if [[ "$role" == "cp" ]]; then
-    echo "$config" | \
-    config=$(yq '.machine.network.interfaces[0].vip.ip = "'"${VIP_IP}"'"')
+    config=$(echo "$config" |yq '.machine.network.interfaces[0].vip.ip = "'"${VIP_IP}"'"')
 
-    for i in "${!CP_IPS[@]}"; do
-      echo "$config" | \
-      config=$(yq '.cluster.apiServer.certSANs['"$i"'] = "'"${CP_IPS[i]}"'"')
+    # Add control plane IPs to certSANs
+    for cp_ip in "${CP_IPS[@]}"; do
+      config=$(echo "$config" | yq eval '.cluster.apiServer.certSANs += ["'"$cp_ip"'"]')
     done
   fi
 
   echo "$config" > "${src_dir}/config.yaml"
 
   # Сборка ISO
-  genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
-
+#  genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
+#
   echo "$out_iso"
 }
 
@@ -517,7 +519,7 @@ check_and_install() {
   }
 
   if ! command -v talosctl >/dev/null 2>&1; then
-    curl -sL https://talos.dev/install | sh
+    "$CURL_BINARY" -sL https://talos.dev/install | sh
   fi
 
   if ! command -v genisoimage >/dev/null 2>&1; then
@@ -535,7 +537,7 @@ check_and_install() {
   fi
 
   if ! command -v helm >/dev/null 2>&1; then
-    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    "$CURL_BINARY" https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
   fi
 }
 
@@ -554,8 +556,8 @@ generate_config() {
 }
 
 clean_seeds() {
-  rm -rf "$(pwd)/seeds/${CLUSTER_NAME}*"
-  rm -f "${ISO_DIR}/${CLUSTER_NAME}*"
+  rm -rf "$(pwd)/seeds/${CLUSTER_NAME}"*
+  rm -f "${ISO_DIR}/${CLUSTER_NAME}"*
 }
 
 main() {
@@ -585,6 +587,12 @@ main() {
   done
   shift $((OPTIND -1))
 
+  for i in $(seq 1 3); do
+    local name="$VM_BASE_NAME_CP${i}"
+    ip="${CP_IPS[$((i-1))]}"
+    create_seed_iso_from_mc "$name" "$ip" "cp"
+  done
+
   check_and_install
   clean_seeds
   generate_config
@@ -611,13 +619,25 @@ main() {
     fi
   fi
 
+  # Validate CP_IPS size
+  if [ "${#CP_IPS[@]}" -gt "$CP_COUNT" ]; then
+    echo "Error: CP_IPS array size (${#CP_IPS[@]}) exceeds CP_COUNT ($CP_COUNT)"
+    exit 1
+  fi
+
+  # Validate WK_IPS size
+  if [ "${#WK_IPS[@]}" -gt "$WK_COUNT" ]; then
+    echo "Error: WK_IPS array size (${#WK_IPS[@]}) exceeds WK_COUNT ($WK_COUNT)"
+    exit 1
+  fi
+
   import_iso_if_needed
 
-  # Reconcile Control-plane
-  reconcile_group "$VM_BASE_NAME_CP" "${#CP_IPS[@]}" "$net_uuid" "$sr_uuid" "cp" 2 4 20
+  # Reconcile Control-plane 
+  reconcile_group "$VM_BASE_NAME_CP" "$CP_COUNT" "$net_uuid" "$sr_uuid" "cp" 2 4 20
 
   # Reconcile Workers
-  reconcile_group "$VM_BASE_NAME_WK" "${#WK_IPS[@]}" "$net_uuid" "$sr_uuid" "wk" 4 16 100
+  reconcile_group "$VM_BASE_NAME_WK" "$WK_COUNT" "$net_uuid" "$sr_uuid" "wk" 4 16 100
 
   echo "Done. Start/stop as needed, e.g.: xe vm-start name-label=${VM_BASE_NAME_CP}1"
 }
