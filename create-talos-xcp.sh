@@ -28,6 +28,7 @@ DNS_SERVER=("8.8.8.8" "1.1.1.1")
 # IP ranges (corresponds to number of machines)
 CP_IPS=("192.168.10.2" "192.168.10.3" "192.168.10.4")
 WK_IPS=("192.168.10.10" "192.168.10.11" "192.168.10.12")
+EXTERNAL_IP=
 
 # Folders for generate seed configs and iso files
 SEEDS_DIR="$(pwd)/seeds"
@@ -523,6 +524,11 @@ check_and_install() {
   if ! command -v yq >/dev/null 2>&1; then
     wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
     chmod +x /usr/local/bin/yq
+  fi
+
+  if ! command -v kubectl >/dev/null 2>&1; then
+    wget https://dl.k8s.io/release/v1.34.0/bin/linux/amd64/kubectl -O /usr/local/bin/kubectl
+    chmod +x /usr/local/bin/kubectl
   fi
 }
 
