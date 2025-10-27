@@ -2,3 +2,4 @@
 /config
 /seeds/*
 !/seeds/.gitkeep
+/.env

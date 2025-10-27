@@ -1,40 +1,70 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ========= CONFIG =========
-CLUSTER_NAME="talos-xcp"
-NETWORK_NAME="vnic"                         # network for adding to VM
-SR_NAME=""                                  # empty for default SR
-CP_COUNT=3
-WK_COUNT=3
+# ========= LOAD ENV =========
+# Load .env file if exists, otherwise use defaults
+if [[ -f .env ]]; then
+  set -a
+  source .env
+  set +a
+fi
+
+# ========= CONFIG WITH DEFAULTS =========
+CLUSTER_NAME="${CLUSTER_NAME:-talos-xcp}"
+NETWORK_NAME="${NETWORK_NAME:-vnic}"
+SR_NAME="${SR_NAME:-}"
+CP_COUNT="${CP_COUNT:-3}"
+WK_COUNT="${WK_COUNT:-3}"
 
 # Images need with support xen-guest-agent and kernel arguments "talos.config=metal-iso"
-ISO_URL="https://factory.talos.dev/image/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae/v1.11.3/metal-amd64.iso"
-ISO_INSTALLER_URL="factory.talos.dev/metal-installer/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae:v1.11.3"
-ISO_LOCAL_PATH="/opt/iso/metal-amd64.iso"
-ISO_SR_NAME="ISO SR"
+ISO_URL="${ISO_URL:-https://factory.talos.dev/image/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae/v1.11.3/metal-amd64.iso}"
+ISO_INSTALLER_URL="${ISO_INSTALLER_URL:-factory.talos.dev/metal-installer/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae:v1.11.3}"
+ISO_LOCAL_PATH="${ISO_LOCAL_PATH:-/opt/iso/metal-amd64.iso}"
+ISO_SR_NAME="${ISO_SR_NAME:-ISO SR}"
 
-CURL_BINARY=""
-STATIC_CURL_PATH="/usr/local/bin/curl-static"
-STATIC_CURL_URL="https://github.com/moparisthebest/static-curl/releases/latest/download/curl-amd64"
-VM_BASE_NAME_CP="${CLUSTER_NAME}-cp"
-VM_BASE_NAME_WK="${CLUSTER_NAME}-wk"
+CURL_BINARY="${CURL_BINARY:-}"
+STATIC_CURL_PATH="${STATIC_CURL_PATH:-/usr/local/bin/curl-static}"
+STATIC_CURL_URL="${STATIC_CURL_URL:-https://github.com/moparisthebest/static-curl/releases/latest/download/curl-amd64}"
+VM_BASE_NAME_CP="${VM_BASE_NAME_CP:-${CLUSTER_NAME}-cp}"
+VM_BASE_NAME_WK="${VM_BASE_NAME_WK:-${CLUSTER_NAME}-wk}"
 
-RECONCILE=true   # если true — добавляем недостающие и удаляем лишние ВМ для соответствия
+RECONCILE="${RECONCILE:-true}"
 
 # IP parameters
-GATEWAY="192.168.10.1"
-CIDR_PREFIX="24"
-DNS_SERVER=("8.8.8.8" "1.1.1.1")
+GATEWAY="${GATEWAY:-192.168.10.1}"
+CIDR_PREFIX="${CIDR_PREFIX:-24}"
 
-# IP ranges (corresponds to number of machines)
-CP_IPS=("192.168.10.2" "192.168.10.3" "192.168.10.4")
-WK_IPS=("192.168.10.10" "192.168.10.11" "192.168.10.12")
-VIP_IP="192.168.10.50"
+# Parse DNS_SERVER from comma-separated string to array
+if [[ -n "${DNS_SERVER:-}" ]]; then
+  IFS=',' read -r -a DNS_SERVER <<< "$DNS_SERVER"
+else
+  DNS_SERVER=("8.8.8.8" "1.1.1.1")
+fi
+
+# Parse IP ranges from comma-separated strings to arrays
+if [[ -n "${CP_IPS:-}" ]]; then
+  IFS=',' read -r -a CP_IPS <<< "$CP_IPS"
+else
+  CP_IPS=("192.168.10.2" "192.168.10.3" "192.168.10.4")
+fi
+
+if [[ -n "${WK_IPS:-}" ]]; then
+  IFS=',' read -r -a WK_IPS <<< "$WK_IPS"
+else
+  WK_IPS=("192.168.10.10" "192.168.10.11" "192.168.10.12")
+fi
+
+if [[ -n "${EXTERNAL_IPS:-}" ]]; then
+  IFS=',' read -r -a EXTERNAL_IPS <<< "$EXTERNAL_IPS"
+else
+  EXTERNAL_IPS=()
+fi
+
+VIP_IP="${VIP_IP:-192.168.10.50}"
 
 # Folders for generate seed configs and iso files
-SEEDS_DIR="$(pwd)/seeds"
-ISO_DIR="/opt/iso"
+SEEDS_DIR="${SEEDS_DIR:-$(pwd)/seeds}"
+ISO_DIR="${ISO_DIR:-/opt/iso}"
 
 # ========= Helpers =========
 xe_must() {
@@ -213,6 +243,10 @@ create_seed_iso_from_mc() {
     # Add control plane IPs to certSANs
     for cp_ip in "${CP_IPS[@]}"; do
       config=$(echo "$config" | yq eval '.cluster.apiServer.certSANs += ["'"$cp_ip"'"]')
+    done
+
+    for ext_ip in "${EXTERNAL_IPS[@]}"; do
+      config=$(echo "$config" | yq eval '.cluster.apiServer.certSANs += ["'"$ext_ip"'"]')
     done
   fi
 
