@@ -28,7 +28,7 @@ DNS_SERVER=("8.8.8.8" "1.1.1.1")
 # IP ranges (corresponds to number of machines)
 CP_IPS=("192.168.10.2" "192.168.10.3" "192.168.10.4")
 WK_IPS=("192.168.10.10" "192.168.10.11" "192.168.10.12")
-EXTERNAL_IP=
+VIP_IP="192.168.10.50"
 
 # Folders for generate seed configs and iso files
 SEEDS_DIR="$(pwd)/seeds"
@@ -192,6 +192,7 @@ create_seed_iso_from_mc() {
   config=$(yq '.machine.network.hostname = "'"${vmname}"'"' "$config_file" | \
   yq '.machine.network.interfaces[0].interface = "enX0"' | \
   yq '.machine.network.interfaces[0].dhcp = false' | \
+  yq '.machine.network.interfaces[0].vip.ip = "'"${VIP_IP}"'"' | \
   yq '.machine.network.interfaces[0].routes[0].gateway = "'"${GATEWAY}"'"' | \
   yq '.machine.network.interfaces[0].addresses[0] = "'"$ip_cidr"'"' | \
   yq '.machine.time.servers[0] = "pool.ntp.org"' | \
@@ -529,6 +530,10 @@ check_and_install() {
   if ! command -v kubectl >/dev/null 2>&1; then
     wget https://dl.k8s.io/release/v1.34.0/bin/linux/amd64/kubectl -O /usr/local/bin/kubectl
     chmod +x /usr/local/bin/kubectl
+  fi
+
+  if ! command -v helm >/dev/null 2>&1; then
+    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
   fi
 }
 
