@@ -192,7 +192,6 @@ create_seed_iso_from_mc() {
   config=$(yq '.machine.network.hostname = "'"${vmname}"'"' "$config_file" | \
   yq '.machine.network.interfaces[0].interface = "enX0"' | \
   yq '.machine.network.interfaces[0].dhcp = false' | \
-  yq '.machine.network.interfaces[0].vip.ip = "'"${VIP_IP}"'"' | \
   yq '.machine.network.interfaces[0].routes[0].gateway = "'"${GATEWAY}"'"' | \
   yq '.machine.network.interfaces[0].addresses[0] = "'"$ip_cidr"'"' | \
   yq '.machine.time.servers[0] = "pool.ntp.org"' | \
@@ -206,6 +205,9 @@ create_seed_iso_from_mc() {
   done
 
   if [[ "$role" == "cp" ]]; then
+    echo "$config" | \
+    config=$(yq '.machine.network.interfaces[0].vip.ip = "'"${VIP_IP}"'"')
+
     for i in "${!CP_IPS[@]}"; do
       echo "$config" | \
       config=$(yq '.cluster.apiServer.certSANs['"$i"'] = "'"${CP_IPS[i]}"'"')
