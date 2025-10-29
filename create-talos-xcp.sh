@@ -256,7 +256,7 @@ create_seed_iso_from_mc() {
   echo "$config" > "${src_dir}/config.yaml"
 
   # Сборка ISO
-  #genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
+  genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
 
   echo "$out_iso"
 }
@@ -624,12 +624,6 @@ main() {
   done
   shift $((OPTIND -1))
 
-  for i in $(seq 1 3); do
-    local name="$VM_BASE_NAME_WK${i}"
-    ip="${WK_IPS[$((i-1))]}"
-    create_seed_iso_from_mc "$name" "$ip" "wk"
-  done
-exit
   check_and_install
   clean_seeds
   generate_config
