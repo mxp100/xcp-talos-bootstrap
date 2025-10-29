@@ -253,8 +253,8 @@ create_seed_iso_from_mc() {
   echo "$config" > "${src_dir}/config.yaml"
 
   # Сборка ISO
-#  genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
-#
+  genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
+
   echo "$out_iso"
 }
 
