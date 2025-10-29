@@ -222,7 +222,7 @@ create_seed_iso_from_mc() {
   # Создаем полный machineconfig
   local config
   config=$(yq eval '... comments=""' "$config_file" | \
-  yq '.cluster.network.cni = "none"' | \
+
   yq '.machine.network.hostname = "'"${vmname}"'"' | \
   yq '.machine.network.interfaces[0].interface = "enX0"' | \
   yq '.machine.network.interfaces[0].dhcp = false' | \
@@ -238,7 +238,10 @@ create_seed_iso_from_mc() {
   done
 
   if [[ "$role" == "cp" ]]; then
-    config=$(echo "$config" |yq '.machine.network.interfaces[0].vip.ip = "'"${VIP_IP}"'"')
+    config=$(echo "$config" | \
+      yq '.machine.network.interfaces[0].vip.ip = "'"${VIP_IP}"'"' | \
+      yq '.cluster.network.cni = "none"'
+    )
 
     # Add control plane IPs to certSANs
     for cp_ip in "${CP_IPS[@]}"; do
@@ -253,7 +256,7 @@ create_seed_iso_from_mc() {
   echo "$config" > "${src_dir}/config.yaml"
 
   # Сборка ISO
-  genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
+  #genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
 
   echo "$out_iso"
 }
@@ -622,11 +625,11 @@ main() {
   shift $((OPTIND -1))
 
   for i in $(seq 1 3); do
-    local name="$VM_BASE_NAME_CP${i}"
-    ip="${CP_IPS[$((i-1))]}"
-    create_seed_iso_from_mc "$name" "$ip" "cp"
+    local name="$VM_BASE_NAME_WK${i}"
+    ip="${WK_IPS[$((i-1))]}"
+    create_seed_iso_from_mc "$name" "$ip" "wk"
   done
-
+exit
   check_and_install
   clean_seeds
   generate_config
