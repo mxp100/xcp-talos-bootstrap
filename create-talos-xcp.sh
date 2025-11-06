@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ========= PARSE ARGUMENTS =========
+SEEDS_ONLY=false
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --seeds-only)
+      SEEDS_ONLY=true
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Usage: $0 [--seeds-only]"
+      exit 1
+      ;;
+  esac
+done
+
 # ========= LOAD ENV =========
 # Load .env file if exists, otherwise use defaults
 if [[ -f .env ]]; then
@@ -13,8 +29,18 @@ fi
 CLUSTER_NAME="${CLUSTER_NAME:-talos-xcp}"
 NETWORK_NAME="${NETWORK_NAME:-vnic}"
 SR_NAME="${SR_NAME:-}"
+
+# Control plane config
 CP_COUNT="${CP_COUNT:-3}"
+CP_CPU="${CP_CPU:-2}"
+CP_RAM="${CP_RAM:-4}"
+CP_DISK="${CP_DISK:-20}"
+
+# Workers config
 WK_COUNT="${WK_COUNT:-3}"
+WK_CPU="${WK_CPU:-4}"
+WK_RAM="${WK_RAM:-16}"
+WK_DISK="${WK_DISK:-100}"
 
 # Images need with support xen-guest-agent and kernel arguments "talos.config=metal-iso"
 ISO_URL="${ISO_URL:-https://factory.talos.dev/image/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae/v1.11.3/metal-amd64.iso}"
@@ -255,10 +281,14 @@ create_seed_iso_from_mc() {
 
   echo "$config" > "${src_dir}/config.yaml"
 
-  # Сборка ISO
-  genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
-
-  echo "$out_iso"
+  # Сборка ISO только если не режим seeds-only
+  if [[ "$SEEDS_ONLY" == "false" ]]; then
+    genisoimage -quiet -volid metal-iso -joliet -rock -o "$out_iso" -graft-points "config.yaml=${src_dir}/config.yaml"
+    echo "$out_iso"
+  else
+    echo "Seed config created: ${src_dir}/config.yaml"
+    echo ""
+  fi
 }
 
 attach_iso() {
@@ -424,6 +454,26 @@ reconcile_group() {
   local vcpu="$6"
   local ram="$7"
   local disk="$8"
+
+  # В режиме seeds-only только генерируем конфиги
+  if [[ "$SEEDS_ONLY" == "true" ]]; then
+    echo "Generating seed configs for ${base}..."
+    for i in $(seq 1 "$desired"); do
+      local name="${base}${i}"
+      local ip=""
+      if [[ "$role" == "cp" ]]; then
+        ip="${CP_IPS[$((i-1))]}"
+      else
+        ip="${WK_IPS[$((i-1))]}"
+      fi
+      if [[ -z "$ip" ]]; then
+        echo "No IP configured for $name, skip."
+        continue
+      fi
+      create_seed_iso_from_mc "$name" "$ip" "$role"
+    done
+    return 0
+  fi
 
   # Создадим недостающие 1..desired
   for i in $(seq 1 "$desired"); do
@@ -600,33 +650,33 @@ clean_seeds() {
 main() {
   echo "Preparing..."
 
-  while getopts ":n:h" opt; do
-    case ${opt} in
-      n )
-        NETWORK_NAME="$OPTARG"
-        ;;
-      h )
-        echo "Usage: $0 [-n NETWORK_NAME]"
-        echo "  -n NETWORK_NAME  : Name of the XCP-ng network to use (default: vnic)"
-        echo "  -h               : Display this help message"
-        exit 0
-        ;;
-      \? )
-        echo "Invalid option: -$OPTARG" >&2
-        echo "Usage: $0 [-n NETWORK_NAME]"
-        exit 1
-        ;;
-      : )
-        echo "Option -$OPTARG requires an argument" >&2
-        exit 1
-        ;;
-    esac
-  done
-  shift $((OPTIND -1))
-
   check_and_install
   clean_seeds
   generate_config
+
+  # В режиме seeds-only пропускаем проверки VM и ISO
+  if [[ "$SEEDS_ONLY" == "true" ]]; then
+    echo "Running in seeds-only mode..."
+    
+    # Validate CP_IPS size
+    if [ "${#CP_IPS[@]}" -gt "$CP_COUNT" ]; then
+      echo "Error: CP_IPS array size (${#CP_IPS[@]}) exceeds CP_COUNT ($CP_COUNT)"
+      exit 1
+    fi
+
+    # Validate WK_IPS size
+    if [ "${#WK_IPS[@]}" -gt "$WK_COUNT" ]; then
+      echo "Error: WK_IPS array size (${#WK_IPS[@]}) exceeds WK_COUNT ($WK_COUNT)"
+      exit 1
+    fi
+
+    # Генерация только seed конфигов
+    reconcile_group "$VM_BASE_NAME_CP" "$CP_COUNT" "" "" "cp" 2 4 20
+    reconcile_group "$VM_BASE_NAME_WK" "$WK_COUNT" "" "" "wk" 4 16 100
+
+    echo "Done. Seed configs generated in $SEEDS_DIR"
+    return 0
+  fi
 
   local net_uuid sr_uuid default_sr
   net_uuid=$(find_network_uuid "$NETWORK_NAME")
