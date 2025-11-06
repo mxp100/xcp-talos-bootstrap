@@ -265,8 +265,8 @@ create_seed_iso_from_mc() {
 
   if [[ "$role" == "cp" ]]; then
     config=$(echo "$config" | \
-      yq '.machine.network.interfaces[0].vip.ip = "'"${VIP_IP}"'"' | \
-      yq '.cluster.network.cni.name = "none"'
+      yq '.machine.network.interfaces[0].vip.ip = "'"${VIP_IP}"'"'
+#      yq '.cluster.network.cni.name = "none"'
     )
 
     # Add control plane IPs to certSANs
