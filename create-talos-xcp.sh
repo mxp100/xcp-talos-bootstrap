@@ -650,6 +650,113 @@ clean_seeds() {
   rm -f "${ISO_DIR}/${CLUSTER_NAME}"*
 }
 
+start_all_vms() {
+  echo "Starting all cluster VMs..."
+
+  # Start control plane VMs
+  for i in $(seq 1 "$CP_COUNT"); do
+    local name="${VM_BASE_NAME_CP}${i}"
+    local vm_uuid
+    vm_uuid=$(get_vm_uuid_by_name "$name")
+    if [[ -n "$vm_uuid" ]]; then
+      local power_state
+      power_state=$(xe vm-param-get uuid="$vm_uuid" param-name=power-state)
+      if [[ "$power_state" != "running" ]]; then
+        echo "Starting $name..."
+        xe vm-start uuid="$vm_uuid"
+      else
+        echo "$name is already running"
+      fi
+    fi
+  done
+
+  # Start worker VMs
+  for i in $(seq 1 "$WK_COUNT"); do
+    local name="${VM_BASE_NAME_WK}${i}"
+    local vm_uuid
+    vm_uuid=$(get_vm_uuid_by_name "$name")
+    if [[ -n "$vm_uuid" ]]; then
+      local power_state
+      power_state=$(xe vm-param-get uuid="$vm_uuid" param-name=power-state)
+      if [[ "$power_state" != "running" ]]; then
+        echo "Starting $name..."
+        xe vm-start uuid="$vm_uuid"
+      else
+        echo "$name is already running"
+      fi
+    fi
+  done
+}
+
+wait_for_talos_api() {
+  echo "Waiting for Talos API to become available..."
+  local max_attempts=60
+  local attempt=0
+  local all_ready=false
+
+  while [[ $attempt -lt $max_attempts ]]; do
+    all_ready=true
+
+    # Check all control plane nodes
+    for ip in "${CP_IPS[@]}"; do
+      if ! talosctl --talosconfig "$(pwd)/config/talosconfig" \
+           --nodes "$ip" version &>/dev/null; then
+        echo "Waiting for Talos API on $ip... (attempt $((attempt+1))/$max_attempts)"
+        all_ready=false
+        break
+      fi
+    done
+
+    if [[ "$all_ready" == "true" ]]; then
+      echo "All control plane nodes are responding to Talos API"
+      return 0
+    fi
+
+    attempt=$((attempt+1))
+    sleep 5
+  done
+
+  echo "Error: Talos API did not become available within expected time"
+  return 1
+}
+
+bootstrap_cluster() {
+  echo "Bootstrapping Talos cluster..."
+
+  # Bootstrap using the first control plane node
+  local bootstrap_node="${CP_IPS[0]}"
+  echo "Bootstrapping from node: $bootstrap_node"
+
+  talosctl --talosconfig "$(pwd)/config/talosconfig" \
+           --nodes "$bootstrap_node" \
+           bootstrap
+
+  echo "Bootstrap command sent. Waiting for Kubernetes to initialize..."
+
+  # Wait for kubeconfig to be available
+  local max_wait=120
+  local waited=0
+  while [[ $waited -lt $max_wait ]]; do
+    if talosctl --talosconfig "$(pwd)/config/talosconfig" \
+         --nodes "$bootstrap_node" \
+         kubeconfig "$(pwd)/config/kubeconfig" 2>/dev/null; then
+      echo "Kubeconfig successfully retrieved"
+      break
+    fi
+    echo "Waiting for Kubernetes API... ($waited/$max_wait seconds)"
+    sleep 10
+    waited=$((waited+10))
+  done
+
+  if [[ $waited -ge $max_wait ]]; then
+    echo "Warning: Could not retrieve kubeconfig within expected time"
+    return 1
+  fi
+
+  echo "Cluster bootstrap completed successfully"
+  return 0
+}
+
 main() {
   echo "Preparing..."
 
@@ -723,7 +830,22 @@ main() {
   # Reconcile Workers
   reconcile_group "$VM_BASE_NAME_WK" "$WK_COUNT" "$net_uuid" "$sr_uuid" "wk" 4 16 100
 
-  echo "Done. Start/stop as needed, e.g.: xe vm-start name-label=${VM_BASE_NAME_CP}1"
+  # Start all VMs
+  start_all_vms
+
+  # Wait for Talos API
+  if wait_for_talos_api; then
+    # Bootstrap the cluster
+    bootstrap_cluster
+  else
+    echo "Skipping bootstrap due to API timeout"
+    exit 1
+  fi
+
+  echo "Done. Cluster is ready!"
+  echo "To interact with the cluster:"
+  echo "  export TALOSCONFIG=$(pwd)/config/talosconfig"
+  echo "  export KUBECONFIG=$(pwd)/config/kubeconfig"
 }
 
 main "$@"
