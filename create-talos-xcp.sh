@@ -3,15 +3,26 @@ set -euo pipefail
 
 # ========= PARSE ARGUMENTS =========
 SEEDS_ONLY=false
+START_VMS=false
+RUN_BOOTSTRAP=false
 while [[ $# -gt 0 ]]; do
   case $1 in
     --seeds-only)
       SEEDS_ONLY=true
       shift
       ;;
+    --start-vms)
+      START_VMS=true
+      shift
+      ;;
+    --bootstrap)
+      START_VMS=true
+      RUN_BOOTSTRAP=true
+      shift
+      ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--seeds-only]"
+      echo "Usage: $0 [--seeds-only] [--start-vms] [--bootstrap]"
       exit 1
       ;;
   esac
@@ -827,25 +838,29 @@ main() {
   # Reconcile Control-plane 
   reconcile_group "$VM_BASE_NAME_CP" "$CP_COUNT" "$net_uuid" "$sr_uuid" "cp" 2 4 20
 
-  # Reconcile Workers
+      # Reconcile Workers
   reconcile_group "$VM_BASE_NAME_WK" "$WK_COUNT" "$net_uuid" "$sr_uuid" "wk" 4 16 100
 
-  # Start all VMs
-  start_all_vms
+  # Start all VMs only if flag is set
+  if [[ "$START_VMS" == "true" ]]; then
+    start_all_vms
 
-  # Wait for Talos API
-  if wait_for_talos_api; then
-    # Bootstrap the cluster
-    bootstrap_cluster
+    # Wait for Talos API and bootstrap only if both flags are set
+    if [[ "$RUN_BOOTSTRAP" == "true" ]]; then
+      if wait_for_talos_api; then
+        bootstrap_cluster
+      else
+        echo "Skipping bootstrap due to API timeout"
+        exit 1
+      fi
+    else
+      echo "Skipping bootstrap (use --bootstrap flag to enable)"
+    fi
   else
-    echo "Skipping bootstrap due to API timeout"
-    exit 1
+    echo "VMs created but not started (use --start-vms flag to start them)"
   fi
 
   echo "Done. Cluster is ready!"
-  echo "To interact with the cluster:"
-  echo "  export TALOSCONFIG=$(pwd)/config/talosconfig"
-  echo "  export KUBECONFIG=$(pwd)/config/kubeconfig"
 }
 
 main "$@"
