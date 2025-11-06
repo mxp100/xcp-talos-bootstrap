@@ -558,8 +558,11 @@ create_vm() {
 
   # Set HVM mode
   xe_must vm-param-set uuid="$vm_uuid" HVM-boot-policy="BIOS order"
-  xe_must vm-param-set uuid="$vm_uuid" HVM-boot-params:order="dc"
-  
+  xe_must vm-param-set uuid="$vm_uuid" HVM-boot-params:order="cd"
+
+  # Set auto_poweron
+  xe_must vm-param-set uuid="$vm_uuid" other-config:auto_poweron=true
+
   # Remove PV bootloader settings
   xe_must vm-param-remove uuid="$vm_uuid" param-name=PV-bootloader 2>/dev/null || true
   xe_must vm-param-remove uuid="$vm_uuid" param-name=PV-args 2>/dev/null || true
