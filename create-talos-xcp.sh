@@ -768,6 +768,64 @@ bootstrap_cluster() {
   return 0
 }
 
+install_cilium() {
+  echo "Installing Cilium CNI via Helm..."
+
+  export KUBECONFIG="$(pwd)/config/kubeconfig"
+
+  # Wait for Kubernetes API to be fully ready
+  echo "Waiting for Kubernetes API to be ready..."
+  local max_attempts=60
+  local attempt=0
+  while [[ $attempt -lt $max_attempts ]]; do
+    if kubectl get nodes &>/dev/null; then
+      echo "Kubernetes API is ready"
+      break
+    fi
+    echo "Waiting for Kubernetes API... (attempt $((attempt+1))/$max_attempts)"
+    sleep 5
+    attempt=$((attempt+1))
+  done
+
+  if [[ $attempt -ge $max_attempts ]]; then
+    echo "Error: Kubernetes API did not become ready"
+    return 1
+  fi
+
+  # Add Cilium Helm repository
+  echo "Adding Cilium Helm repository..."
+  helm repo add cilium https://helm.cilium.io/
+  helm repo update
+
+  # Install Cilium
+  echo "Installing Cilium..."
+  helm install cilium cilium/cilium \
+    --version 1.18.3 \
+    --namespace kube-system \
+    --set ipam.mode=kubernetes \
+    --set kubeProxyReplacement=false \
+    --set securityContext.capabilities.ciliumAgent="{CHOWN,KILL,NET_ADMIN,NET_RAW,IPC_LOCK,SYS_ADMIN,SYS_RESOURCE,DAC_OVERRIDE,FOWNER,SETGID,SETUID}" \
+    --set securityContext.capabilities.cleanCiliumState="{NET_ADMIN,SYS_ADMIN,SYS_RESOURCE}" \
+    --set cgroup.autoMount.enabled=false \
+    --set cgroup.hostRoot=/sys/fs/cgroup \
+    --set k8sServiceHost="${CP_IPS[0]}" \
+    --set k8sServicePort=6443
+
+  if [[ $? -ne 0 ]]; then
+    echo "Error: Failed to install Cilium"
+    return 1
+  fi
+
+  echo "Waiting for Cilium pods to be ready..."
+  kubectl wait --for=condition=ready pod \
+    --selector=k8s-app=cilium \
+    --namespace=kube-system \
+    --timeout=300s
+
+  echo "Cilium CNI installed successfully"
+  return 0
+}
+
 main() {
   echo "Preparing..."
 
@@ -848,7 +906,13 @@ main() {
     # Wait for Talos API and bootstrap only if both flags are set
     if [[ "$RUN_BOOTSTRAP" == "true" ]]; then
       if wait_for_talos_api; then
-        bootstrap_cluster
+        if bootstrap_cluster; then
+          # Install Cilium after successful bootstrap
+          install_cilium
+        else
+          echo "Bootstrap failed, skipping Cilium installation"
+          exit 1
+        fi
       else
         echo "Skipping bootstrap due to API timeout"
         exit 1
