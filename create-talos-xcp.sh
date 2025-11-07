@@ -52,6 +52,8 @@ WK_COUNT="${WK_COUNT:-3}"
 WK_CPU="${WK_CPU:-4}"
 WK_RAM="${WK_RAM:-16}"
 WK_DISK="${WK_DISK:-100}"
+WK_EXTRA_DISK_ENABLED="${WK_EXTRA_DISK_ENABLED:-false}"
+WK_EXTRA_DISK_SIZE="${WK_EXTRA_DISK_SIZE:-100}"
 
 # Images need with support xen-guest-agent and kernel arguments "talos.config=metal-iso"
 ISO_URL="${ISO_URL:-https://factory.talos.dev/image/f2aa06dc76070d9c9fbec2d5fee1abf452f7fccd91637337e3d868c074242fae/v1.11.3/metal-amd64.iso}"
@@ -456,7 +458,7 @@ destroy_vm_by_uuid() {
 }
 
 reconcile_group() {
-  # $1 base name prefix, $2 desired count, $3 net_uuid, $4 sr_uuid, $5 kargs, $6 role(cp|wk), $7 vcpu, $8 ramGiB, $9 diskGiB
+  # $1 base name prefix, $2 desired count, $3 net_uuid, $4 sr_uuid, $5 role(cp|wk), $6 vcpu, $7 ramGiB, $8 diskGiB, $9 extra_disk_gib
   local base="$1"
   local desired="$2"
   local net_uuid="$3"
@@ -465,6 +467,7 @@ reconcile_group() {
   local vcpu="$6"
   local ram="$7"
   local disk="$8"
+  local extra_disk="${9:-0}"
 
   # В режиме seeds-only только генерируем конфиги
   if [[ "$SEEDS_ONLY" == "true" ]]; then
@@ -507,7 +510,7 @@ reconcile_group() {
     fi
 
     local vm_uuid
-    vm_uuid=$(create_vm "$name" "$vcpu" "$ram" "$disk" "$net_uuid" "$sr_uuid")
+    vm_uuid=$(create_vm "$name" "$vcpu" "$ram" "$disk" "$net_uuid" "$sr_uuid" "$extra_disk")
     echo "VM UUID: $vm_uuid"
     attach_iso "$vm_uuid" "$ISO_LOCAL_PATH"
     echo "Disk source attached"
@@ -546,6 +549,7 @@ create_vm() {
   local disk_gib="$4"
   local net_uuid="$5"
   local sr_uuid="$6"
+  local extra_disk_gib="${7:-0}"
 
   local template_uuid vm_uuid vdi_uuid vbd_uuid vif_uuid
 
@@ -604,6 +608,15 @@ create_vm() {
   vdi_uuid=$(xe vdi-create name-label="${name}-disk" sr-uuid="$sr_uuid" type=user virtual-size=$((disk_gib*1024*1024*1024)))
   vbd_uuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$vdi_uuid" device=0 bootable=true type=Disk mode=RW)
   xe_must vbd-param-set uuid="$vbd_uuid" userdevice=0
+
+  # Extra disk (optional)
+  if [[ "$extra_disk_gib" -gt 0 ]]; then
+    local extra_vdi_uuid extra_vbd_uuid
+    extra_vdi_uuid=$(xe vdi-create name-label="${name}-disk-extra" sr-uuid="$sr_uuid" type=user virtual-size=$((extra_disk_gib*1024*1024*1024)))
+    extra_vbd_uuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$extra_vdi_uuid" device=1 bootable=false type=Disk mode=RW)
+    xe_must vbd-param-set uuid="$extra_vbd_uuid" userdevice=1
+    echo "Added extra disk: ${extra_disk_gib}GB"
+  fi
 
   echo "$vm_uuid"
 }
@@ -894,10 +907,14 @@ main() {
   import_iso_if_needed
 
   # Reconcile Control-plane 
-  reconcile_group "$VM_BASE_NAME_CP" "$CP_COUNT" "$net_uuid" "$sr_uuid" "cp" 2 4 20
+  reconcile_group "$VM_BASE_NAME_CP" "$CP_COUNT" "$net_uuid" "$sr_uuid" "cp" 2 4 20 0
 
-      # Reconcile Workers
-  reconcile_group "$VM_BASE_NAME_WK" "$WK_COUNT" "$net_uuid" "$sr_uuid" "wk" 4 16 100
+  # Reconcile Workers (с дополнительным диском)
+  local wk_extra_size=0
+  if [[ "$WK_EXTRA_DISK_ENABLED" == "true" ]]; then
+    wk_extra_size="$WK_EXTRA_DISK_SIZE"
+  fi
+  reconcile_group "$VM_BASE_NAME_WK" "$WK_COUNT" "$net_uuid" "$sr_uuid" "wk" 4 16 100 "$wk_extra_size"
 
   # Start all VMs only if flag is set
   if [[ "$START_VMS" == "true" ]]; then
