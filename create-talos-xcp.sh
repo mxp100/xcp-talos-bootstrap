@@ -829,10 +829,39 @@ install_cilium() {
   fi
 
   echo "Waiting for Cilium pods to be ready..."
-  kubectl wait --for=condition=ready pod \
-    --selector=k8s-app=cilium \
-    --namespace=kube-system \
-    --timeout=300s
+
+  # Retry logic for kubectl wait - 3 attempts with delays
+  local wait_attempts=0
+  local max_wait_attempts=3
+  local wait_success=false
+
+  while [[ $wait_attempts -lt $max_wait_attempts ]]; do
+    wait_attempts=$((wait_attempts+1))
+    echo "Attempt $wait_attempts/$max_wait_attempts: Waiting for Cilium pods..."
+
+    if kubectl wait --for=condition=ready pod \
+      --selector=k8s-app=cilium \
+      --namespace=kube-system \
+      --timeout=300s 2>/dev/null; then
+      wait_success=true
+      break
+    else
+      echo "Wait attempt $wait_attempts failed. Checking pod status..."
+      kubectl get pods -n kube-system -l k8s-app=cilium 2>/dev/null || true
+
+      if [[ $wait_attempts -lt $max_wait_attempts ]]; then
+        echo "Retrying in 10 seconds..."
+        sleep 10
+      fi
+    fi
+  done
+
+  if [[ "$wait_success" != "true" ]]; then
+    echo "Error: Cilium pods did not become ready after $max_wait_attempts attempts"
+    echo "Current pod status:"
+    kubectl get pods -n kube-system -l k8s-app=cilium
+    return 1
+  fi
 
   echo "Cilium CNI installed successfully"
   return 0
