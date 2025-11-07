@@ -615,7 +615,6 @@ create_vm() {
     extra_vdi_uuid=$(xe vdi-create name-label="${name}-disk-extra" sr-uuid="$sr_uuid" type=user virtual-size=$((extra_disk_gib*1024*1024*1024)))
     extra_vbd_uuid=$(xe vbd-create vm-uuid="$vm_uuid" vdi-uuid="$extra_vdi_uuid" device=1 bootable=false type=Disk mode=RW)
     xe_must vbd-param-set uuid="$extra_vbd_uuid" userdevice=1
-    echo "Added extra disk: ${extra_disk_gib}GB"
   fi
 
   echo "$vm_uuid"
