@@ -830,9 +830,9 @@ install_cilium() {
 
   echo "Waiting for Cilium pods to be ready..."
 
-  # Retry logic for kubectl wait - 3 attempts with delays
+  # Retry logic for kubectl wait - 10 attempts with delays
   local wait_attempts=0
-  local max_wait_attempts=3
+  local max_wait_attempts=10
   local wait_success=false
 
   while [[ $wait_attempts -lt $max_wait_attempts ]]; do
