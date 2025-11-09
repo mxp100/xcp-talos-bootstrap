@@ -633,7 +633,7 @@ check_and_install() {
 
   if ! command -v talosctl >/dev/null 2>&1; then
     echo "Install talosctl"
-    ${CURL_BINARY} -sL 'https://talos.dev/install' | sudo sh
+    "${CURL_BINARY}" -sL https://talos.dev/install | sudo sh -s -- -f
     echo "DONE"
   fi
 
@@ -651,12 +651,13 @@ check_and_install() {
   fi
 
   if ! command -v kubectl >/dev/null 2>&1; then
-    wget https://dl.k8s.io/release/v1.34.0/bin/linux/amd64/kubectl -O /usr/local/bin/kubectl
-    chmod +x /usr/local/bin/kubectl
+    "${CURL_BINARY}" -LO "https://dl.k8s.io/release/v1.28.2/bin/linux/amd64/kubectl"
+    chmod +x kubectl
+    sudo mv kubectl /usr/local/bin/
   fi
 
   if ! command -v helm >/dev/null 2>&1; then
-    "$CURL_BINARY" https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    "${CURL_BINARY}" -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | sudo bash
   fi
 }
 
