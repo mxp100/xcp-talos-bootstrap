@@ -73,6 +73,8 @@ RECONCILE="${RECONCILE:-true}"
 GATEWAY="${GATEWAY:-192.168.10.1}"
 CIDR_PREFIX="${CIDR_PREFIX:-24}"
 
+export CURL_CA_BUNDLE=/etc/ssl/certs/ca-bundle.crt
+
 # Parse DNS_SERVER from comma-separated string to array
 if [[ -n "${DNS_SERVER:-}" ]]; then
   IFS=',' read -r -a DNS_SERVER <<< "$DNS_SERVER"
