@@ -632,16 +632,22 @@ check_and_install() {
   }
 
   if ! command -v talosctl >/dev/null 2>&1; then
+    echo "Install talosctl"
     "$CURL_BINARY" -sL https://talos.dev/install | sh
+    echo "DONE"
   fi
 
   if ! command -v genisoimage >/dev/null 2>&1; then
+    echo "Install genisoimage"
     yum install -y genisoimage >/dev/null
+    echo "DONE"
   fi
 
   if ! command -v yq >/dev/null 2>&1; then
+    echo "Install yq"
     wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
     chmod +x /usr/local/bin/yq
+    echo "DONE"
   fi
 
   if ! command -v kubectl >/dev/null 2>&1; then
