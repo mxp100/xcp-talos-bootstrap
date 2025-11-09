@@ -633,8 +633,7 @@ check_and_install() {
 
   if ! command -v talosctl >/dev/null 2>&1; then
     echo "Install talosctl"
-    echo "$CURL_BINARY"
-    "${CURL_BINARY}" -sL https://talos.dev/install | sh
+    "${CURL_BINARY} -sL https://talos.dev/install" | sh
     echo "DONE"
   fi
 
