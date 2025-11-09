@@ -675,6 +675,9 @@ generate_config() {
         echo "Config files already exist in $config_dir, skipping generation"
         echo "To regenerate, delete the directory or add --force flag to talosctl"
     fi
+
+    # Configure endpoints with all control plane IPs
+    talosctl --talosconfig "$(pwd)/config/talosconfig" config endpoints "${CP_IPS[@]}"
 }
 
 clean_seeds() {
